@@ -137,6 +137,26 @@ class AppleMusicRecommendationManager:
             )
             self._last_recommendation_counts = totals
 
+    def _parse_recommended_media(
+        self, item_type: str, item: dict[str, Any]
+    ) -> Album | Artist | ItemMapping | Playlist | Track | None:
+        """Convert Apple recommendation media using the existing provider parsers."""
+        try:
+            if item_type == "artists":
+                return parse_artist(self.provider, item)
+            if item_type == "albums":
+                return parse_album(self.provider, item)
+            if item_type == "songs":
+                return parse_track(self.provider, item)
+            return parse_playlist(self.provider, item)
+        except (KeyError, TypeError, ValueError) as err:
+            self.logger.debug(
+                "Skipping incomplete Apple recommendation %s: %s",
+                item_type,
+                type(err).__name__,
+            )
+            return None
+
     async def get_personal_recommendations(self) -> list[RecommendationFolder]:
         """Return supported Apple recommendations, not stations alone.
 
@@ -192,21 +212,7 @@ class AppleMusicRecommendationManager:
                     # invent titles or make network requests for every card.
                     if not isinstance(attributes, dict) or not attributes.get("name"):
                         continue
-                    try:
-                        if item_type == "artists":
-                            media = parse_artist(self.provider, item)
-                        elif item_type == "albums":
-                            media = parse_album(self.provider, item)
-                        elif item_type == "songs":
-                            media = parse_track(self.provider, item)
-                        else:
-                            media = parse_playlist(self.provider, item)
-                    except (KeyError, TypeError, ValueError) as err:
-                        self.logger.debug(
-                            "Skipping incomplete Apple recommendation %s: %s",
-                            item_type, type(err).__name__,
-                        )
-                        continue
+                    media = self._parse_recommended_media(item_type, item)
                     if media is None or not media.name:
                         continue
 

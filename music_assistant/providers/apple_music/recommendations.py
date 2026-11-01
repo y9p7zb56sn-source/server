@@ -18,7 +18,13 @@ from music_assistant_models.media_items import (
 
 from music_assistant.controllers.cache import use_cache
 
-from .parsers import parse_artist, parse_station_as_playlist, parse_track
+from .parsers import (
+    parse_album,
+    parse_artist,
+    parse_playlist,
+    parse_station_as_playlist,
+    parse_track,
+)
 
 if TYPE_CHECKING:
     from .provider import AppleMusicProvider
@@ -104,19 +110,45 @@ class AppleMusicRecommendationManager:
             station_obj = station_response["data"][0]
             station_obj["id"] = station_id
             return parse_station_as_playlist(self.provider, station_obj)
-        except MediaNotFoundError, KeyError, IndexError:
+        except (MediaNotFoundError, KeyError, IndexError):
             return parse_station_as_playlist(self.provider, {"id": station_id})
 
     async def get_personal_recommendations(self) -> list[RecommendationFolder]:
-        """Fetch personal recommendations grouped into folders by section title."""
+        """Return supported Apple recommendations, not stations alone.
+
+        Keep authenticated Apple Music and playback inside Music Assistant.
+        Retain provider order, preserve repeated items across different rows,
+        and skip unsupported/incomplete entries without failing other rows.
+        """
         response = await self.api.get_data(
             "me/recommendations?include[personal-recommendation]=contents"
         )
-        seen: set[str] = set()
+        # Count resource types from the already-authorised response. Never log
+        # individual titles, station IDs, account data or API credentials.
+        observed = {kind: [0, 0] for kind in (
+            "albums", "artists", "playlists", "songs", "stations"
+        )}
+        for section in response.get("data", []):
+            for raw in section.get("relationships", {}).get("contents", {}).get("data", []):
+                kind = raw.get("type")
+                if kind in observed:
+                    observed[kind][0] += 1
+                    attrs = raw.get("attributes") or {}
+                    if raw.get("id") and isinstance(attrs, dict) and attrs.get("name"):
+                        observed[kind][1] += 1
+        totals = tuple((kind, *values) for kind, values in observed.items())
+        if totals != getattr(self, "_last_recommendation_counts", None):
+            self.logger.info(
+                "Apple recommendation resource counts (total/named): %s",
+                " ".join(f"{kind}={total}/{named}" for kind, total, named in totals),
+            )
+            self._last_recommendation_counts = totals
+
         folders: dict[str, RecommendationFolder] = {}
-        # Reset maps so stale entries from previous fetches are not kept.
+        seen: set[tuple[str, str, str]] = set()
         self._station_id_to_name.clear()
         self._station_name_to_id.clear()
+
         for recommendation in response.get("data", []):
             rec_id = recommendation.get("id", "")
             title = (
@@ -126,32 +158,61 @@ class AppleMusicRecommendationManager:
                 continue
             contents = recommendation.get("relationships", {}).get("contents", {})
             for item in contents.get("data", []):
-                if item.get("type") != "stations":
+                item_type = item.get("type")
+                item_id = item.get("id")
+                if not item_id or item_type not in {
+                    "artists", "albums", "songs", "playlists", "stations"
+                }:
                     continue
-                station_id = item.get("id")
-                if not station_id or station_id in seen:
+                key = (title, item_type, str(item_id))
+                if key in seen:
                     continue
-                attributes = item.get("attributes", {})
-                if attributes.get("isLive", False):
-                    # Live broadcast stations require Widevine DRM; skip them.
-                    continue
-                seen.add(station_id)
-                if attributes.get("name"):
-                    playlist = parse_station_as_playlist(self.provider, item)
-                else:
-                    playlist = await self.provider.get_playlist(station_id)
-                    if playlist.name == station_id:
+
+                attributes = item.get("attributes") or {}
+                if item_type == "stations":
+                    if attributes.get("isLive", False):
+                        # Existing Widevine-protected live station exclusion.
                         continue
-                if playlist.name and playlist.name != station_id:
-                    self._station_id_to_name[station_id] = playlist.name
-                    self._station_name_to_id[playlist.name] = station_id
+                    if attributes.get("name"):
+                        media = parse_station_as_playlist(self.provider, item)
+                    else:
+                        media = await self.provider.get_playlist(item_id)
+                    if not media.name or media.name == item_id:
+                        continue
+                    self._station_id_to_name[item_id] = media.name
+                    self._station_name_to_id[media.name] = item_id
+                else:
+                    # Apple can return ID-only relationship references. Do not
+                    # invent titles or make network requests for every card.
+                    if not isinstance(attributes, dict) or not attributes.get("name"):
+                        continue
+                    try:
+                        if item_type == "artists":
+                            media = parse_artist(self.provider, item)
+                        elif item_type == "albums":
+                            media = parse_album(self.provider, item)
+                        elif item_type == "songs":
+                            media = parse_track(self.provider, item)
+                        else:
+                            media = parse_playlist(self.provider, item)
+                    except (KeyError, TypeError, ValueError) as err:
+                        self.logger.debug(
+                            "Skipping incomplete Apple recommendation %s: %s",
+                            item_type, type(err).__name__,
+                        )
+                        continue
+                    if media is None or not media.name:
+                        continue
+
+                seen.add(key)
                 if title not in folders:
                     folders[title] = RecommendationFolder(
                         item_id=_slugify_title(title),
                         provider=self.provider.instance_id,
                         name=title,
                     )
-                folders[title].items.append(playlist)
+                folders[title].items.append(media)
+
         return list(folders.values())
 
     async def resolve_station_id(self, stale_id: str) -> str | None:
@@ -180,6 +241,7 @@ class AppleMusicRecommendationManager:
                 item
                 for folder in await self.provider._recommendation_payload()
                 for item in folder.items
+                if isinstance(item, Playlist) and item.is_dynamic
             ],
         )
 
@@ -195,6 +257,8 @@ class AppleMusicRecommendationManager:
             return
         for folder in folders:
             for item in folder.items:
-                if item.name and item.name != item.item_id:
+                # Mixed rows contain artists, albums and ordinary playlists.
+                if (isinstance(item, Playlist) and item.is_dynamic
+                        and item.name and item.name != item.item_id):
                     self._station_id_to_name[item.item_id] = item.name
                     self._station_name_to_id[item.name] = item.item_id

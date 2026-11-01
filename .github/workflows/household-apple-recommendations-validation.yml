@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/1759-ma-2.10.1-local-validation
+      - validation/1759-two-module-native-2101
   workflow_dispatch:
 
 permissions:
@@ -34,9 +35,9 @@ jobs:
         id: lint
         continue-on-error: true
         run: |
-          ruff format --diff music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
-          ruff check --no-fix music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
-          ruff format --check music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff format --diff music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff check --no-fix music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff format --check music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
       - name: Native Apple Music provider tests
         run: pytest -q tests/providers/apple_music/test_recommendations.py
       - name: Enforce lint outcome

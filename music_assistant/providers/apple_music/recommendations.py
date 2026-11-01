@@ -1,7 +1,12 @@
-"""Recommendations and station helpers for Apple Music."""
+"""Recommendations and station helpers for Apple Music.
+
+Adapted from Music Assistant 2.10.1 under Apache-2.0; prototype only.
+https://github.com/music-assistant/server/blob/2.10.1/music_assistant/providers/apple_music/recommendations.py
+"""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from typing import TYPE_CHECKING, Any, cast
 
@@ -111,7 +116,7 @@ class AppleMusicRecommendationManager:
             station_obj = station_response["data"][0]
             station_obj["id"] = station_id
             return parse_station_as_playlist(self.provider, station_obj)
-        except MediaNotFoundError, KeyError, IndexError:
+        except (MediaNotFoundError, KeyError, IndexError):
             return parse_station_as_playlist(self.provider, {"id": station_id})
 
     def _log_recommendation_counts(self, response: dict[str, Any]) -> None:
@@ -157,6 +162,32 @@ class AppleMusicRecommendationManager:
             )
             return None
 
+    async def get_recently_played_tracks(self, limit: int = 20) -> list[Track]:
+        """Read actual recent song history; never substitute recommendation stations.
+
+        This is source-only until a supported Music Assistant provider API entry
+        point has been selected and authorised for the running installation.
+        """
+        if not 1 <= limit <= 30:
+            raise ValueError("Apple recent tracks limit must be between 1 and 30")
+        response = await self.api.get_data(
+            "me/recent/played/tracks", types="songs,library-songs", limit=limit
+        )
+        tracks: list[Track] = []
+        for raw in response.get("data", []):
+            if not isinstance(raw, dict) or raw.get("type") not in ("songs", "library-songs"):
+                continue
+            attrs = raw.get("attributes")
+            if not raw.get("id") or not isinstance(attrs, dict) or not attrs.get("name"):
+                continue
+            try:
+                parsed = parse_track(self.provider, raw)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if isinstance(parsed, Track):
+                tracks.append(parsed)
+        return tracks[:limit]
+
     async def get_personal_recommendations(self) -> list[RecommendationFolder]:
         """
         Return supported Apple recommendations, not stations alone.
@@ -165,8 +196,30 @@ class AppleMusicRecommendationManager:
         Retain provider order, preserve repeated items across different rows,
         and skip unsupported/incomplete entries without failing other rows.
         """
-        response = await self.api.get_data(
-            "me/recommendations?include[personal-recommendation]=contents"
+        # Source-only diagnostic candidate (#1759). Warning-level status is
+        # deliberately independent of the provider's INFO-level count logger.
+        self.logger.warning(
+            "MA1759_REFRESH=START effective_level=%s",
+            self.logger.getEffectiveLevel(),
+        )
+        try:
+            response = await self.api.get_data(
+                "me/recommendations?include[personal-recommendation]=contents"
+            )
+        except BaseException as exc:
+            # No exception message, account data or raw response in diagnostic logs.
+            event = "CANCELLED" if isinstance(exc, asyncio.CancelledError) else "FETCH_FAILED"
+            self.logger.warning("MA1759_REFRESH=%s", event)
+            raise
+        counts = {kind: 0 for kind in ("albums", "artists", "songs", "playlists", "stations")}
+        for section in response.get("data", []):
+            for item in section.get("relationships", {}).get("contents", {}).get("data", []):
+                kind = item.get("type")
+                if kind in counts:
+                    counts[kind] += 1
+        self.logger.warning(
+            "MA1759_REFRESH=APPLE_RESPONSE %s",
+            " ".join(f"{kind}={count}" for kind, count in counts.items()),
         )
         self._log_recommendation_counts(response)
 

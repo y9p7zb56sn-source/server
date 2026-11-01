@@ -158,7 +158,8 @@ class AppleMusicRecommendationManager:
             return None
 
     async def get_personal_recommendations(self) -> list[RecommendationFolder]:
-        """Return supported Apple recommendations, not stations alone.
+        """
+        Return supported Apple recommendations, not stations alone.
 
         Keep authenticated Apple Music and playback inside Music Assistant.
         Retain provider order, preserve repeated items across different rows,

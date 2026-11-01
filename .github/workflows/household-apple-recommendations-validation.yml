@@ -31,8 +31,16 @@ jobs:
           pip install uv
           uv pip install --system --index-strategy unsafe-best-match . .[test] -r requirements_all.txt
       - name: Ruff check changed files
+        id: lint
+        continue-on-error: true
         run: |
-          ruff check music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff format --diff music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff check --no-fix music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
           ruff format --check music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
       - name: Native Apple Music provider tests
         run: pytest -q tests/providers/apple_music/test_recommendations.py
+      - name: Enforce lint outcome
+        if: always()
+        env:
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+        run: test "$LINT_OUTCOME" = "success"

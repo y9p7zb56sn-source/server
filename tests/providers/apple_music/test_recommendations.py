@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from music_assistant_models.media_items import Playlist, UniqueList
+from music_assistant_models.media_items import Album, Artist, Playlist, Track, UniqueList
 
 from music_assistant.providers.apple_music.provider import AppleMusicProvider
 
@@ -220,3 +220,135 @@ async def test_resolve_station_id_unknown_returns_none(provider: AppleMusicProvi
 
     assert result is None
     api_get_data.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_household_1759_mixed_recommendation_media_and_station_browse(
+    provider: AppleMusicProvider,
+) -> None:
+    """Existing Apple request yields typed media without changing radio browse."""
+    response = _recommendations_response(
+        {
+            "Made for You": [
+                {
+                    "type": "playlists",
+                    "id": "pl.custom",
+                    "attributes": {"name": "Private Mix", "curatorName": "Apple Music"},
+                },
+                {
+                    "type": "albums",
+                    "id": "123",
+                    "attributes": {
+                        "name": "Example Album",
+                        "artistName": "Example Artist",
+                        "playParams": {"id": "123", "kind": "album"},
+                    },
+                },
+                {
+                    "type": "artists",
+                    "id": "456",
+                    "attributes": {"name": "Example Artist"},
+                },
+                {
+                    "type": "songs",
+                    "id": "789",
+                    "attributes": {
+                        "name": "Example Track",
+                        "artistName": "Example Artist",
+                        "durationInMillis": 180000,
+                        "playParams": {"id": "789", "kind": "song"},
+                    },
+                },
+                _station("ra.dynamic", "Your Radio"),
+            ]
+        }
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = response
+
+    rows = await provider.get_recommendations()
+    await asyncio.sleep(0)
+    items = await provider.get_recommendation_items("made_for_you")
+    station_items = await provider.recommendation_manager.browse_stations()
+
+    assert [row.name for row in rows] == ["Made for You"]
+    assert not rows[0].items
+    assert [type(item) for item in items] == [Playlist, Album, Artist, Track, Playlist]
+    assert [item.name for item in items] == [
+        "Private Mix", "Example Album", "Example Artist", "Example Track", "Your Radio"
+    ]
+    assert not items[0].is_dynamic
+    assert items[4].is_dynamic
+    assert [item.item_id for item in station_items] == ["ra.dynamic"]
+    assert [item.item_id for item in items] == ["pl.custom", "123", "456", "789", "ra.dynamic"]
+    assert provider.recommendation_manager._station_id_to_name == {
+        "ra.dynamic": "Your Radio"
+    }
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_household_1759_count_log_contains_no_titles_or_ids(
+    provider: AppleMusicProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Type counts are generated from the original fetch without disclosing contents."""
+    response = _recommendations_response(
+        {
+            "Secret Personal Section": [
+                {"type": "albums", "id": "confidential-album-id",
+                 "attributes": {"name": "Confidential Album"}},
+                {"type": "songs", "id": "private-song", "attributes": {}},
+                _station("ra.private", "Private Station"),
+            ]
+        }
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = response
+    log = Mock()
+    monkeypatch.setattr(provider.recommendation_manager.logger, "info", log)
+
+    await provider.get_recommendation_items("secret_personal_section")
+    records = [
+        call.args[0] % call.args[1:]
+        for call in log.call_args_list
+        if call.args and str(call.args[0]).startswith("Apple recommendation resource counts")
+    ]
+    assert len(records) == 1
+    assert "albums=1/1" in records[0]
+    assert "songs=1/0" in records[0]
+    assert "stations=1/1" in records[0]
+    assert "Secret Personal Section" not in records[0]
+    assert "Confidential Album" not in records[0]
+    assert "confidential-album-id" not in records[0]
+    assert "ra.private" not in records[0]
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_household_1759_unsupported_items_do_not_corrupt_radio_maps(
+    provider: AppleMusicProvider,
+) -> None:
+    """ID-only media and unsupported live stations are ignored; radio IDs remain."""
+    response = _recommendations_response(
+        {
+            "Stations for You": [
+                {"type": "playlists", "id": "pl.missing", "attributes": {}},
+                {"type": "music-videos", "id": "mv.unsupported",
+                 "attributes": {"name": "Video"}},
+                _station("ra.live", "Live Radio", is_live=True),
+                _station("ra.good", "Dynamic Radio"),
+            ]
+        }
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = response
+
+    items = await provider.get_recommendation_items("stations_for_you")
+    manager = provider.recommendation_manager
+    assert [item.item_id for item in items] == ["ra.good"]
+    manager._station_id_to_name.clear()
+    manager._station_name_to_id.clear()
+    manager._populate_station_maps(await provider._recommendation_payload())
+    assert manager._station_id_to_name == {"ra.good": "Dynamic Radio"}
+    api.assert_awaited_once()

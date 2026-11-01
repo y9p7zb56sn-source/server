@@ -56,3 +56,37 @@ jobs:
         env:
           LINT_OUTCOME: ${{ steps.lint.outcome }}
         run: test "$LINT_OUTCOME" = "success"
+
+  isolated-two-file-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate native pair against immutable MA image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=ghcr.io/music-assistant/server:2.10.1
+          expected=sha256:d844e93f1bd30204e9f4322b425745bd1a11c6e781a773f0a7cdfe07de3f6782
+          docker pull "$image"
+          test "$(docker image inspect --format '{{.Id}}' "$image")" = "$expected"
+          module_root=/app/venv/lib/python3.14/site-packages/music_assistant/providers/apple_music
+          container=$(docker create --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /app/venv/bin/python "$image" -c '
+          import importlib, importlib.metadata
+          from pathlib import Path
+          root=Path("/app/venv/lib/python3.14/site-packages/music_assistant/providers/apple_music")
+          assert importlib.metadata.version("music-assistant") == "2.10.1"
+          for name in ("provider.py", "recommendations.py"):
+              compile((root/name).read_bytes(), str(root/name), "exec")
+          importlib.import_module("music_assistant.providers.apple_music.provider")
+          importlib.import_module("music_assistant.providers.apple_music.recommendations")
+          print("MA1759_NATIVE_PAIR=IMPORT_PASS")
+          ')
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          for file in provider.py recommendations.py; do
+            docker cp "music_assistant/providers/apple_music/$file" "$container:$module_root/$file"
+          done
+          docker start -a "$container"

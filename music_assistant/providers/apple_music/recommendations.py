@@ -111,16 +111,16 @@ class AppleMusicRecommendationManager:
             station_obj = station_response["data"][0]
             station_obj["id"] = station_id
             return parse_station_as_playlist(self.provider, station_obj)
-        except (MediaNotFoundError, KeyError, IndexError):
+        except MediaNotFoundError, KeyError, IndexError:
             return parse_station_as_playlist(self.provider, {"id": station_id})
 
     def _log_recommendation_counts(self, response: dict[str, Any]) -> None:
         """Report private aggregate recommendation counts without additional Apple requests."""
         # Count resource types from the already-authorised response. Never log
         # individual titles, station IDs, account data or API credentials.
-        observed = {kind: [0, 0] for kind in (
-            "albums", "artists", "playlists", "songs", "stations"
-        )}
+        observed = {
+            kind: [0, 0] for kind in ("albums", "artists", "playlists", "songs", "stations")
+        }
         for section in response.get("data", []):
             for raw in section.get("relationships", {}).get("contents", {}).get("data", []):
                 kind = raw.get("type")
@@ -186,7 +186,11 @@ class AppleMusicRecommendationManager:
                 item_type = item.get("type")
                 item_id = item.get("id")
                 if not item_id or item_type not in {
-                    "artists", "albums", "songs", "playlists", "stations"
+                    "artists",
+                    "albums",
+                    "songs",
+                    "playlists",
+                    "stations",
                 }:
                     continue
                 key = (title, item_type, str(item_id))
@@ -270,7 +274,11 @@ class AppleMusicRecommendationManager:
         for folder in folders:
             for item in folder.items:
                 # Mixed rows contain artists, albums and ordinary playlists.
-                if (isinstance(item, Playlist) and item.is_dynamic
-                        and item.name and item.name != item.item_id):
+                if (
+                    isinstance(item, Playlist)
+                    and item.is_dynamic
+                    and item.name
+                    and item.name != item.item_id
+                ):
                     self._station_id_to_name[item.item_id] = item.name
                     self._station_name_to_id[item.name] = item.item_id

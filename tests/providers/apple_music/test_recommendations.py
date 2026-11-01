@@ -275,15 +275,17 @@ async def test_household_1759_mixed_recommendation_media_and_station_browse(
     assert not rows[0].items
     assert [type(item) for item in items] == [Playlist, Album, Artist, Track, Playlist]
     assert [item.name for item in items] == [
-        "Private Mix", "Example Album", "Example Artist", "Example Track", "Your Radio"
+        "Private Mix",
+        "Example Album",
+        "Example Artist",
+        "Example Track",
+        "Your Radio",
     ]
     assert not items[0].is_dynamic
     assert items[4].is_dynamic
     assert [item.item_id for item in station_items] == ["ra.dynamic"]
     assert [item.item_id for item in items] == ["pl.custom", "123", "456", "789", "ra.dynamic"]
-    assert provider.recommendation_manager._station_id_to_name == {
-        "ra.dynamic": "Your Radio"
-    }
+    assert provider.recommendation_manager._station_id_to_name == {"ra.dynamic": "Your Radio"}
     api.assert_awaited_once()
 
 
@@ -296,8 +298,11 @@ async def test_household_1759_count_log_contains_no_titles_or_ids(
     response = _recommendations_response(
         {
             "Secret Personal Section": [
-                {"type": "albums", "id": "confidential-album-id",
-                 "attributes": {"name": "Confidential Album"}},
+                {
+                    "type": "albums",
+                    "id": "confidential-album-id",
+                    "attributes": {"name": "Confidential Album"},
+                },
                 {"type": "songs", "id": "private-song", "attributes": {}},
                 _station("ra.private", "Private Station"),
             ]
@@ -334,8 +339,7 @@ async def test_household_1759_unsupported_items_do_not_corrupt_radio_maps(
         {
             "Stations for You": [
                 {"type": "playlists", "id": "pl.missing", "attributes": {}},
-                {"type": "music-videos", "id": "mv.unsupported",
-                 "attributes": {"name": "Video"}},
+                {"type": "music-videos", "id": "mv.unsupported", "attributes": {"name": "Video"}},
                 _station("ra.live", "Live Radio", is_live=True),
                 _station("ra.good", "Dynamic Radio"),
             ]

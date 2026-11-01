@@ -116,7 +116,7 @@ class AppleMusicRecommendationManager:
             station_obj = station_response["data"][0]
             station_obj["id"] = station_id
             return parse_station_as_playlist(self.provider, station_obj)
-        except (MediaNotFoundError, KeyError, IndexError):
+        except MediaNotFoundError, KeyError, IndexError:
             return parse_station_as_playlist(self.provider, {"id": station_id})
 
     def _log_recommendation_counts(self, response: dict[str, Any]) -> None:
@@ -182,7 +182,7 @@ class AppleMusicRecommendationManager:
                 continue
             try:
                 parsed = parse_track(self.provider, raw)
-            except (KeyError, TypeError, ValueError):
+            except KeyError, TypeError, ValueError:
                 continue
             if isinstance(parsed, Track):
                 tracks.append(parsed)

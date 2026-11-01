@@ -90,3 +90,24 @@ jobs:
             docker cp "music_assistant/providers/apple_music/$file" "$container:$module_root/$file"
           done
           docker start -a "$container"
+      - name: Prepare exact-source two-file artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ma1759-release
+          cp music_assistant/providers/apple_music/provider.py ma1759-release/provider.py
+          cp music_assistant/providers/apple_music/recommendations.py ma1759-release/recommendations.py
+          (
+            cd ma1759-release
+            printf '%s  provider.py\n' ca0e88acd9253887ebf3df8dd8f61ef4ec74ec59fb1edf5da1810c0aa18c9f58 > SHA256SUMS
+            printf '%s  recommendations.py\n' 43ea3c78d873a6854ae5d6965477fca2785704516b35cacb1e7c697b75bebac6 >> SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+      - name: Publish exact source-only release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ma1759-native-2101-two-file
+          path: ma1759-release/
+          if-no-files-found: error
+          retention-days: 14
+

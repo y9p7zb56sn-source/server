@@ -1,4 +1,5 @@
-"""Recommendations and station helpers for Apple Music.
+"""
+Recommendations and station helpers for Apple Music.
 
 Adapted from Music Assistant 2.10.1 under Apache-2.0; prototype only.
 https://github.com/music-assistant/server/blob/2.10.1/music_assistant/providers/apple_music/recommendations.py
@@ -163,7 +164,8 @@ class AppleMusicRecommendationManager:
             return None
 
     async def get_recently_played_tracks(self, limit: int = 20) -> list[Track]:
-        """Read actual recent song history; never substitute recommendation stations.
+        """
+        Read actual recent song history; never substitute recommendation stations.
 
         This is source-only until a supported Music Assistant provider API entry
         point has been selected and authorised for the running installation.
@@ -188,7 +190,7 @@ class AppleMusicRecommendationManager:
                 tracks.append(parsed)
         return tracks[:limit]
 
-    async def get_personal_recommendations(self) -> list[RecommendationFolder]:
+    async def get_personal_recommendations(self) -> list[RecommendationFolder]:  # noqa: PLR0915
         """
         Return supported Apple recommendations, not stations alone.
 
@@ -211,7 +213,7 @@ class AppleMusicRecommendationManager:
             event = "CANCELLED" if isinstance(exc, asyncio.CancelledError) else "FETCH_FAILED"
             self.logger.warning("MA1759_REFRESH=%s", event)
             raise
-        counts = {kind: 0 for kind in ("albums", "artists", "songs", "playlists", "stations")}
+        counts = dict.fromkeys(("albums", "artists", "songs", "playlists", "stations"), 0)
         for section in response.get("data", []):
             for item in section.get("relationships", {}).get("contents", {}).get("data", []):
                 kind = item.get("type")

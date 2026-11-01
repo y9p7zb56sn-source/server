@@ -30,6 +30,14 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Record exact two-module file identities
+        run: |
+          set -eu
+          for file in music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py; do
+            sha256sum "$file"
+            git hash-object "$file"
+            python -m py_compile "$file"
+          done
       - name: Install Python package dependencies
         run: |
           pip install uv

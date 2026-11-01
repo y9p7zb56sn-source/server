@@ -93,8 +93,8 @@ async def test_get_recommendations_returns_rows_without_items(
     """get_recommendations() returns the payload's section rows, stripped of items."""
     rows = await provider.get_recommendations()
 
-    assert [row.item_id for row in rows] == ["made_for_you", "stations_for_you"]
-    assert [row.name for row in rows] == ["Made for You", "Stations for You"]
+    assert [row.item_id for row in rows] == ["made_for_you", "stations_for_you", "apple_recent_tracks_1759"]
+    assert [row.name for row in rows] == ["Made for You", "Stations for You", "Recently Played Tracks"]
     assert all(row.provider == INSTANCE_ID for row in rows)
     assert all(not row.items for row in rows)
 
@@ -356,3 +356,49 @@ async def test_household_1759_unsupported_items_do_not_corrupt_radio_maps(
     manager._populate_station_maps(await provider._recommendation_payload())
     assert manager._station_id_to_name == {"ra.good": "Dynamic Radio"}
     api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_1759_native_history_row_is_distinct_and_lazy(provider: AppleMusicProvider) -> None:
+    """Native provider exposes history without querying history during row enumeration."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    rows = await provider.get_recommendations()
+    assert [row.item_id for row in rows][-1] == "apple_recent_tracks_1759"
+    api.assert_awaited_once()
+    await asyncio.sleep(0)
+    result = await provider.get_recommendation_items("made_for_you")
+    assert [item.item_id for item in result] == ["ra.111"]
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_1759_native_history_uses_track_endpoint_and_parser(provider: AppleMusicProvider) -> None:
+    """Retrieve actual songs, excluding stations and malformed history entries."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.reset_mock()
+    api.return_value = {"data": [
+        {"type": "songs", "id": "song.1", "attributes": {
+            "name": "History Song", "artistName": "Example Artist",
+            "durationInMillis": 180000, "playParams": {"id": "song.1", "kind": "song"},
+        }},
+        {"type": "stations", "id": "ra.1", "attributes": {"name": "Radio"}},
+        {"type": "songs", "id": "broken", "attributes": {}},
+    ]}
+    result = await provider.get_recommendation_items("apple_recent_tracks_1759")
+    assert [item.item_id for item in result] == ["song.1"]
+    assert all(isinstance(item, Track) for item in result)
+    api.assert_awaited_once_with(
+        "me/recent/played/tracks", types="songs,library-songs", limit=20
+    )
+
+
+@pytest.mark.asyncio
+async def test_1759_history_failure_is_not_silently_relabelled(provider: AppleMusicProvider) -> None:
+    """Permission errors propagate and do not yield station recommendations."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = PermissionError("not authorised")
+    with pytest.raises(PermissionError):
+        await provider.get_recommendation_items("apple_recent_tracks_1759")
+    api.assert_awaited_once_with(
+        "me/recent/played/tracks", types="songs,library-songs", limit=20
+    )

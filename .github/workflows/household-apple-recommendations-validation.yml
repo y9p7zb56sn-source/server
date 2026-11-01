@@ -1,0 +1,38 @@
+name: Household Apple Music 2.10.1 source validation
+
+on:
+  push:
+    branches:
+      - feature/1759-ma-2.10.1-local-validation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apple-provider-native-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container: python:3.14-slim-trixie
+    env:
+      URLLIB3_NO_OVERRIDE: "1"
+      LD_PRELOAD: libstdc++.so.6
+    steps:
+      - name: Install native test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ffmpeg git build-essential libssl-dev curl
+      - name: Checkout exact feature branch
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Python package dependencies
+        run: |
+          pip install uv
+          uv pip install --system --index-strategy unsafe-best-match . .[test] -r requirements_all.txt
+      - name: Ruff check changed files
+        run: |
+          ruff check music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff format --check music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+      - name: Native Apple Music provider tests
+        run: pytest -q tests/providers/apple_music/test_recommendations.py

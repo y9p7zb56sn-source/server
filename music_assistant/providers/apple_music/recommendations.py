@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import ClientResponseError
 from music_assistant_models.enums import MediaType
 from music_assistant_models.errors import MediaNotFoundError
 from music_assistant_models.media_items import (
+    Album,
     Artist,
     ItemMapping,
     Playlist,
@@ -113,16 +114,8 @@ class AppleMusicRecommendationManager:
         except (MediaNotFoundError, KeyError, IndexError):
             return parse_station_as_playlist(self.provider, {"id": station_id})
 
-    async def get_personal_recommendations(self) -> list[RecommendationFolder]:
-        """Return supported Apple recommendations, not stations alone.
-
-        Keep authenticated Apple Music and playback inside Music Assistant.
-        Retain provider order, preserve repeated items across different rows,
-        and skip unsupported/incomplete entries without failing other rows.
-        """
-        response = await self.api.get_data(
-            "me/recommendations?include[personal-recommendation]=contents"
-        )
+    def _log_recommendation_counts(self, response: dict[str, Any]) -> None:
+        """Report private aggregate recommendation counts without additional Apple requests."""
         # Count resource types from the already-authorised response. Never log
         # individual titles, station IDs, account data or API credentials.
         observed = {kind: [0, 0] for kind in (
@@ -143,6 +136,18 @@ class AppleMusicRecommendationManager:
                 " ".join(f"{kind}={total}/{named}" for kind, total, named in totals),
             )
             self._last_recommendation_counts = totals
+
+    async def get_personal_recommendations(self) -> list[RecommendationFolder]:
+        """Return supported Apple recommendations, not stations alone.
+
+        Keep authenticated Apple Music and playback inside Music Assistant.
+        Retain provider order, preserve repeated items across different rows,
+        and skip unsupported/incomplete entries without failing other rows.
+        """
+        response = await self.api.get_data(
+            "me/recommendations?include[personal-recommendation]=contents"
+        )
+        self._log_recommendation_counts(response)
 
         folders: dict[str, RecommendationFolder] = {}
         seen: set[tuple[str, str, str]] = set()
@@ -169,6 +174,7 @@ class AppleMusicRecommendationManager:
                     continue
 
                 attributes = item.get("attributes") or {}
+                media: Album | Artist | ItemMapping | Playlist | Track | None
                 if item_type == "stations":
                     if attributes.get("isLive", False):
                         # Existing Widevine-protected live station exclusion.

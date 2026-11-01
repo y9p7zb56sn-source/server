@@ -133,8 +133,17 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         return await self.media_manager.search(search_query, media_types, limit)
 
     async def get_recommendations(self) -> list[RecommendationFolder]:
-        """Get this provider's available recommendation rows, without items."""
-        return await self._recommendation_rows_from_payload()
+        """Combine provider recommendations with a separately attributed track-history row."""
+        rows = list(await self._recommendation_rows_from_payload())
+        if not any(row.item_id == "apple_recent_tracks_1759" for row in rows):
+            rows.append(
+                RecommendationFolder(
+                    item_id="apple_recent_tracks_1759",
+                    provider=self.instance_id,
+                    name="Recently Played Tracks",
+                )
+            )
+        return rows
 
     async def get_recommendation_items(
         self, item_id: str
@@ -144,6 +153,8 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
 
         :param item_id: The item_id of the row, as returned by get_recommendations.
         """
+        if item_id == "apple_recent_tracks_1759":
+            return UniqueList(await self.recommendation_manager.get_recently_played_tracks(20))
         return await self._recommendation_items_from_payload(item_id)
 
     # ------------------------------------------------------------------

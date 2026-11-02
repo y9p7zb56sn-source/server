@@ -201,7 +201,11 @@ class AppleMusicRecommendationManager:
                     if not isinstance(attributes, dict):
                         continue
                     name = attributes.get("name")
-                    if isinstance(name, str) and name.strip() and name.strip().casefold() != "unknown album":
+                    if (
+                        isinstance(name, str)
+                        and name.strip()
+                        and name.strip().casefold() != "unknown album"
+                    ):
                         enriched[detail["id"]] = detail
             except (
                 ClientResponseError,

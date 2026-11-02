@@ -281,7 +281,11 @@ async def test_household_1759_mixed_recommendation_media_and_station_browse(
     items = await provider.get_recommendation_items("made_for_you")
     station_items = await provider.recommendation_manager.browse_stations()
 
-    assert [row.name for row in rows] == ["Made for You", "Recently Played Tracks", "Recently Added"]
+    assert [row.name for row in rows] == [
+        "Made for You",
+        "Recently Played Tracks",
+        "Recently Added",
+    ]
     assert not rows[0].items
     assert [type(item) for item in items] == [Playlist, Album, Artist, Track, Playlist]
     assert [item.name for item in items] == [

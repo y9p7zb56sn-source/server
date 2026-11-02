@@ -175,7 +175,11 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         from aiohttp import ClientResponseError
 
         endpoints = (
-            ("recent_tracks", "me/recent/played/tracks", {"types": "songs,library-songs", "limit": 5}),
+            (
+                "recent_tracks",
+                "me/recent/played/tracks",
+                {"types": "songs,library-songs", "limit": 5},
+            ),
             ("recently_added", "me/library/recently-added", {"limit": 5}),
         )
         results: dict[str, object] = {}
@@ -187,8 +191,11 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
                     results[label] = {"state": "invalid_shape"}
                     continue
                 kinds = sorted(
-                    {item["type"] for item in values if isinstance(item, dict)
-                     and isinstance(item.get("type"), str)}
+                    {
+                        item["type"]
+                        for item in values
+                        if isinstance(item, dict) and isinstance(item.get("type"), str)
+                    }
                 )
                 results[label] = {
                     "state": "available" if values else "empty",

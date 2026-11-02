@@ -92,6 +92,7 @@ jobs:
           done
           docker start -a "$container"
       - name: Prepare exact-source two-file artifact
+        if: github.ref_name == 'validation/1759-two-module-native-2101'
         shell: bash
         run: |
           set -euo pipefail
@@ -105,6 +106,7 @@ jobs:
             sha256sum -c SHA256SUMS
           )
       - name: Publish exact source-only release bundle
+        if: github.ref_name == 'validation/1759-two-module-native-2101'
         uses: actions/upload-artifact@v4
         with:
           name: ma1759-native-2101-two-file

@@ -607,3 +607,97 @@ async def test_1759_readonly_capability_summary_handles_empty_and_failure(
         "recent_tracks": {"state": "empty", "count": 0, "types": []},
         "recently_added": {"state": "unavailable"},
     }
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_enriches_unknown_album_without_reordering(
+    provider: AppleMusicProvider,
+) -> None:
+    """A bounded Apple library detail read improves a placeholder in its original slot."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        {
+            "data": [
+                {
+                    "type": "library-albums",
+                    "id": "l.first",
+                    "attributes": {"name": "First Real Album", "artistName": "Artist One"},
+                },
+                {
+                    "type": "library-albums",
+                    "id": "l.placeholder",
+                    "attributes": {"name": "Unknown Album"},
+                },
+                {
+                    "type": "library-albums",
+                    "id": "l.last",
+                    "attributes": {"name": "Last Real Album", "artistName": "Artist Two"},
+                },
+            ]
+        },
+        {
+            "data": [
+                {
+                    "type": "library-albums",
+                    "id": "l.placeholder",
+                    "attributes": {
+                        "name": "Recovered Album",
+                        "artistName": "Recovered Artist",
+                    },
+                }
+            ]
+        },
+    ]
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+    assert [item.name for item in result] == [
+        "First Real Album",
+        "Recovered Album",
+        "Last Real Album",
+    ]
+    assert [item.item_id for item in result] == ["l.first", "l.placeholder", "l.last"]
+    assert [call.args[0] for call in api.await_args_list] == [
+        "me/library/recently-added",
+        "me/library/albums",
+    ]
+    assert api.await_args_list[1].kwargs == {"ids": "l.placeholder"}
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_preserves_unresolved_unknown_album(
+    provider: AppleMusicProvider,
+) -> None:
+    """Do not invent album details when Apple does not resolve a placeholder."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    raw = {
+        "type": "library-albums",
+        "id": "l.placeholder",
+        "attributes": {"name": "Unknown Album"},
+    }
+    api.side_effect = [{"data": [raw]}, {"data": [raw]}]
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+    assert len(result) == 1
+    assert result[0].name == "Unknown Album"
+    assert api.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_resilient_to_enrichment_timeout(
+    provider: AppleMusicProvider,
+) -> None:
+    """An optional metadata request failure cannot remove original recent albums."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        {
+            "data": [
+                {
+                    "type": "library-albums",
+                    "id": "l.placeholder",
+                    "attributes": {"name": "Unknown Album"},
+                }
+            ]
+        },
+        TimeoutError(),
+    ]
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+    assert [item.name for item in result] == ["Unknown Album"]
+    assert api.await_count == 2

@@ -163,6 +163,33 @@ class AppleMusicRecommendationManager:
             )
             return None
 
+    async def get_recently_added_library(self) -> list[Album | Artist | Playlist | Track]:
+        """Read Apple's genuine mixed recently-added library resources in returned order."""
+        response = await self.api.get_data("me/library/recently-added")
+        parsers = {
+            "library-albums": parse_album,
+            "library-artists": parse_artist,
+            "library-playlists": parse_playlist,
+            "library-songs": parse_track,
+        }
+        items: list[Album | Artist | Playlist | Track] = []
+        for raw in response.get("data", []):
+            if not isinstance(raw, dict):
+                continue
+            parser = parsers.get(raw.get("type"))
+            attrs = raw.get("attributes")
+            if parser is None or not raw.get("id") or not isinstance(attrs, dict):
+                continue
+            if not attrs.get("name"):
+                continue
+            try:
+                media = parser(self.provider, raw)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if isinstance(media, (Album, Artist, Playlist, Track)) and media.name:
+                items.append(media)
+        return items
+
     async def get_recently_played_tracks(self, limit: int = 20) -> list[Track]:
         """
         Read actual recent song history; never substitute recommendation stations.

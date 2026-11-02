@@ -418,3 +418,50 @@ async def test_1759_history_failure_is_not_silently_relabelled(
     with pytest.raises(PermissionError):
         await provider.get_recommendation_items("apple_recent_tracks_1759")
     api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+
+
+@pytest.mark.asyncio
+async def test_1759_native_history_empty_is_not_mixed_recent(
+    provider: AppleMusicProvider,
+) -> None:
+    """An empty native history must stay empty, not become mixed recommendations."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {"data": []}
+
+    result = await provider.get_recommendation_items("apple_recent_tracks_1759")
+
+    assert len(result) == 0
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+
+
+@pytest.mark.asyncio
+async def test_1759_native_history_preserves_api_order(
+    provider: AppleMusicProvider,
+) -> None:
+    """Newest-first API history is retained without re-sorting by title."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [
+            {
+                "type": "songs",
+                "id": identifier,
+                "attributes": {
+                    "name": name,
+                    "artistName": "Example Artist",
+                    "durationInMillis": 180000,
+                    "playParams": {"id": identifier, "kind": "song"},
+                },
+            }
+            for identifier, name in [
+                ("song.9", "Zulu"),
+                ("song.2", "Alpha"),
+                ("song.5", "Middle"),
+            ]
+        ]
+    }
+
+    result = await provider.get_recommendation_items("apple_recent_tracks_1759")
+
+    assert [item.item_id for item in result] == ["song.9", "song.2", "song.5"]
+    assert all(isinstance(item, Track) for item in result)
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)

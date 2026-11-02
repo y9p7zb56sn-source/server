@@ -465,3 +465,36 @@ async def test_1759_native_history_preserves_api_order(
     assert [item.item_id for item in result] == ["song.9", "song.2", "song.5"]
     assert all(isinstance(item, Track) for item in result)
     api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+
+
+@pytest.mark.asyncio
+async def test_1759_native_history_does_not_hide_rate_limit(
+    provider: AppleMusicProvider,
+) -> None:
+    """Transient endpoint failures stay visible rather than yielding fictional music."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = TimeoutError("provider request timed out")
+
+    with pytest.raises(TimeoutError):
+        await provider.get_recommendation_items("apple_recent_tracks_1759")
+
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+
+
+@pytest.mark.asyncio
+async def test_1759_native_history_filters_invalid_resource_shapes(
+    provider: AppleMusicProvider,
+) -> None:
+    """Unparseable and non-track entries cannot masquerade as Apple song history."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {"data": [
+        None,
+        {"type": "playlists", "id": "pl.1", "attributes": {"name": "A Playlist"}},
+        {"type": "songs", "attributes": {"name": "Missing ID"}},
+        {"type": "songs", "id": "song.missing_attributes"},
+    ]}
+
+    result = await provider.get_recommendation_items("apple_recent_tracks_1759")
+
+    assert len(result) == 0
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)

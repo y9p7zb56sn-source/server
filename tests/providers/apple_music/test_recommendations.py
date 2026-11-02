@@ -539,3 +539,31 @@ async def test_1759_native_recently_added_ignores_unrelated_resources(
 
     assert len(result) == 0
     api.assert_awaited_once_with("me/library/recently-added")
+
+
+@pytest.mark.asyncio
+async def test_1759_native_recently_added_keeps_library_playlist_order(
+    provider: AppleMusicProvider,
+) -> None:
+    """Recently Added retains Apple's order and correct editable library identities."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [
+            {
+                "type": "library-playlists",
+                "id": "p.recent1",
+                "attributes": {"name": "Most Recent", "canEdit": True},
+            },
+            {
+                "type": "library-playlists",
+                "id": "p.recent2",
+                "attributes": {"name": "Earlier", "canEdit": False},
+            },
+        ]
+    }
+
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+
+    assert [item.item_id for item in result] == ["p.recent1", "p.recent2"]
+    assert all(isinstance(item, Playlist) for item in result)
+    api.assert_awaited_once_with("me/library/recently-added")

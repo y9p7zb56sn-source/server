@@ -487,12 +487,14 @@ async def test_1759_native_history_filters_invalid_resource_shapes(
 ) -> None:
     """Unparseable and non-track entries cannot masquerade as Apple song history."""
     api = cast("AsyncMock", provider.api_client.get_data)
-    api.return_value = {"data": [
-        None,
-        {"type": "playlists", "id": "pl.1", "attributes": {"name": "A Playlist"}},
-        {"type": "songs", "attributes": {"name": "Missing ID"}},
-        {"type": "songs", "id": "song.missing_attributes"},
-    ]}
+    api.return_value = {
+        "data": [
+            None,
+            {"type": "playlists", "id": "pl.1", "attributes": {"name": "A Playlist"}},
+            {"type": "songs", "attributes": {"name": "Missing ID"}},
+            {"type": "songs", "id": "song.missing_attributes"},
+        ]
+    }
 
     result = await provider.get_recommendation_items("apple_recent_tracks_1759")
 

@@ -97,11 +97,13 @@ async def test_get_recommendations_returns_rows_without_items(
         "made_for_you",
         "stations_for_you",
         "apple_recent_tracks_1759",
+        "apple_recently_added_1759",
     ]
     assert [row.name for row in rows] == [
         "Made for You",
         "Stations for You",
         "Recently Played Tracks",
+        "Recently Added",
     ]
     assert all(row.provider == INSTANCE_ID for row in rows)
     assert all(not row.items for row in rows)
@@ -371,7 +373,7 @@ async def test_1759_native_history_row_is_distinct_and_lazy(provider: AppleMusic
     """Native provider exposes history without querying history during row enumeration."""
     api = cast("AsyncMock", provider.api_client.get_data)
     rows = await provider.get_recommendations()
-    assert [row.item_id for row in rows][-1] == "apple_recent_tracks_1759"
+    assert [row.item_id for row in rows][-2] == "apple_recent_tracks_1759"
     api.assert_awaited_once()
     await asyncio.sleep(0)
     result = await provider.get_recommendation_items("made_for_you")

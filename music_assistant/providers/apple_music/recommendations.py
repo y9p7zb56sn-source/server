@@ -183,7 +183,8 @@ class AppleMusicRecommendationManager:
             and raw.get("type") == "library-albums"
             and isinstance(raw.get("id"), str)
             and isinstance(raw.get("attributes"), dict)
-            and raw["attributes"].get("name", "").strip().casefold() == "unknown album"
+            and isinstance(raw["attributes"].get("name"), str)
+            and raw["attributes"]["name"].strip().casefold() == "unknown album"
         ][:20]
         enriched: dict[str, dict[str, Any]] = {}
         if placeholders:

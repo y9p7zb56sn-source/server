@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 from aiohttp import ClientResponseError
-
 from music_assistant_models.media_items import (
     Album,
     Artist,

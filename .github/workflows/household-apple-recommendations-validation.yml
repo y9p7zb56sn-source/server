@@ -117,7 +117,7 @@ jobs:
 
 
       - name: Prepare expanded native source artifact
-        if: github.ref_name == 'validation/1759-recently-added-native-2101'
+        if: github.ref_name == 'validation/1759-recently-added-native-2101' || github.head_ref == 'validation/1759-recently-added-native-2101'
         shell: bash
         run: |
           set -euo pipefail
@@ -130,7 +130,7 @@ jobs:
             sha256sum -c SHA256SUMS
           )
       - name: Publish expanded native source-only bundle
-        if: github.ref_name == 'validation/1759-recently-added-native-2101'
+        if: github.ref_name == 'validation/1759-recently-added-native-2101' || github.head_ref == 'validation/1759-recently-added-native-2101'
         uses: actions/upload-artifact@v4
         with:
           name: ma1759-native-2101-expanded

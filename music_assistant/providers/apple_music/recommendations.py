@@ -228,15 +228,15 @@ class AppleMusicRecommendationManager:
         for raw in raw_items:
             if not isinstance(raw, dict):
                 continue
-            raw = enriched.get(raw.get("id"), raw)
-            parser = parsers.get(raw.get("type"))
-            attrs = raw.get("attributes")
-            if parser is None or not raw.get("id") or not isinstance(attrs, dict):
+            item = enriched.get(raw.get("id"), raw)
+            parser = parsers.get(item.get("type"))
+            attrs = item.get("attributes")
+            if parser is None or not item.get("id") or not isinstance(attrs, dict):
                 continue
             if not attrs.get("name"):
                 continue
             try:
-                media = parser(self.provider, raw)
+                media = parser(self.provider, item)
             except KeyError, TypeError, ValueError:
                 continue
             if isinstance(media, (Album, Artist, Playlist, Track)) and media.name:

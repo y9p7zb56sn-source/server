@@ -166,6 +166,41 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
             return UniqueList(await self.recommendation_manager.get_recently_added_library())
         return await self._recommendation_items_from_payload(item_id)
 
+    async def get_household_readonly_capability_summary(self) -> dict[str, object]:
+        """Probe bounded Apple read endpoints through this provider's existing session.
+
+        No account identifiers, tokens, titles or resource IDs are returned.
+        This method is not automatically executed or exposed as a public command.
+        """
+        from aiohttp import ClientResponseError
+
+        endpoints = (
+            ("recent_tracks", "me/recent/played/tracks", {"types": "songs,library-songs", "limit": 5}),
+            ("recently_added", "me/library/recently-added", {"limit": 5}),
+        )
+        results: dict[str, object] = {}
+        for label, endpoint, params in endpoints:
+            try:
+                response = await self.api_client.get_data(endpoint, **params)
+                values = response.get("data", [])
+                if not isinstance(values, list):
+                    results[label] = {"state": "invalid_shape"}
+                    continue
+                kinds = sorted(
+                    {item["type"] for item in values if isinstance(item, dict)
+                     and isinstance(item.get("type"), str)}
+                )
+                results[label] = {
+                    "state": "available" if values else "empty",
+                    "count": min(len(values), 5),
+                    "types": kinds,
+                }
+            except ClientResponseError as exc:
+                results[label] = {"state": "http_error", "status": exc.status}
+            except Exception:
+                results[label] = {"state": "unavailable"}
+        return results
+
     # ------------------------------------------------------------------
     # Media item getters
     # ------------------------------------------------------------------

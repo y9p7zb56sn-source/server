@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+
+from aiohttp import ClientResponseError
 from typing import TYPE_CHECKING, cast
 
 from music_assistant_models.media_items import (
@@ -167,12 +169,12 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         return await self._recommendation_items_from_payload(item_id)
 
     async def get_household_readonly_capability_summary(self) -> dict[str, object]:
-        """Probe bounded Apple read endpoints through this provider's existing session.
+        """
+        Probe bounded Apple read endpoints through this provider's existing session.
 
         No account identifiers, tokens, titles or resource IDs are returned.
         This method is not automatically executed or exposed as a public command.
         """
-        from aiohttp import ClientResponseError
 
         endpoints = (
             (

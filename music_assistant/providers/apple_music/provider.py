@@ -143,6 +143,13 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
                     name="Recently Played Tracks",
                 )
             )
+        rows.append(
+            RecommendationFolder(
+                item_id="apple_recently_added_1759",
+                provider=self.instance_id,
+                name="Recently Added",
+            )
+        )
         return rows
 
     async def get_recommendation_items(
@@ -155,6 +162,8 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         """
         if item_id == "apple_recent_tracks_1759":
             return UniqueList(await self.recommendation_manager.get_recently_played_tracks(20))
+        if item_id == "apple_recently_added_1759":
+            return UniqueList(await self.recommendation_manager.get_recently_added_library())
         return await self._recommendation_items_from_payload(item_id)
 
     # ------------------------------------------------------------------

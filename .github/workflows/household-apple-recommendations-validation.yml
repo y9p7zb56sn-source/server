@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - feature/1759-ma-2.10.1-local-validation
+      - validation/1759-two-module-native-2101
+  pull_request:
+    branches:
+      - feature/1759-ma-2.10.1-local-validation
   workflow_dispatch:
 
 permissions:
@@ -26,6 +30,14 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Record exact two-module file identities
+        run: |
+          set -eu
+          for file in music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py; do
+            sha256sum "$file"
+            git hash-object "$file"
+            python -m py_compile "$file"
+          done
       - name: Install Python package dependencies
         run: |
           pip install uv
@@ -34,9 +46,9 @@ jobs:
         id: lint
         continue-on-error: true
         run: |
-          ruff format --diff music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
-          ruff check --no-fix music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
-          ruff format --check music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff format --diff music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff check --no-fix music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
+          ruff format --check music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py tests/providers/apple_music/test_recommendations.py
       - name: Native Apple Music provider tests
         run: pytest -q tests/providers/apple_music/test_recommendations.py
       - name: Enforce lint outcome
@@ -44,3 +56,58 @@ jobs:
         env:
           LINT_OUTCOME: ${{ steps.lint.outcome }}
         run: test "$LINT_OUTCOME" = "success"
+
+  isolated-two-file-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate native pair against immutable MA image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=ghcr.io/music-assistant/server:2.10.1
+          expected=sha256:d844e93f1bd30204e9f4322b425745bd1a11c6e781a773f0a7cdfe07de3f6782
+          docker pull "$image"
+          test "$(docker image inspect --format '{{.Id}}' "$image")" = "$expected"
+          module_root=/app/venv/lib/python3.14/site-packages/music_assistant/providers/apple_music
+          container=$(docker create --network none --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /app/venv/bin/python "$image" -c '
+          import importlib, importlib.metadata
+          from pathlib import Path
+          root=Path("/app/venv/lib/python3.14/site-packages/music_assistant/providers/apple_music")
+          assert importlib.metadata.version("music-assistant") == "2.10.1"
+          for name in ("provider.py", "recommendations.py"):
+              compile((root/name).read_bytes(), str(root/name), "exec")
+          importlib.import_module("music_assistant.providers.apple_music.provider")
+          importlib.import_module("music_assistant.providers.apple_music.recommendations")
+          print("MA1759_NATIVE_PAIR=IMPORT_PASS")
+          ')
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          for file in provider.py recommendations.py; do
+            docker cp "music_assistant/providers/apple_music/$file" "$container:$module_root/$file"
+          done
+          docker start -a "$container"
+      - name: Prepare exact-source two-file artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ma1759-release
+          cp music_assistant/providers/apple_music/provider.py ma1759-release/provider.py
+          cp music_assistant/providers/apple_music/recommendations.py ma1759-release/recommendations.py
+          (
+            cd ma1759-release
+            printf '%s  provider.py\n' ca0e88acd9253887ebf3df8dd8f61ef4ec74ec59fb1edf5da1810c0aa18c9f58 > SHA256SUMS
+            printf '%s  recommendations.py\n' 43ea3c78d873a6854ae5d6965477fca2785704516b35cacb1e7c697b75bebac6 >> SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+      - name: Publish exact source-only release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ma1759-native-2101-two-file
+          path: ma1759-release/
+          if-no-files-found: error
+          retention-days: 14
+

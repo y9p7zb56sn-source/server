@@ -1,0 +1,25 @@
+name: HA1759 native provider release identity
+on:
+  push:
+    branches:
+      - validation/1759-two-module-native-2101
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify native source identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in music_assistant/providers/apple_music/provider.py music_assistant/providers/apple_music/recommendations.py; do
+            test -f "$path"
+            sha256sum "$path"
+            git hash-object "$path"
+            python -m py_compile "$path"
+          done

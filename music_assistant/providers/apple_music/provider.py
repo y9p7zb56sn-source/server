@@ -174,7 +174,6 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         No account identifiers, tokens, titles or resource IDs are returned.
         This method is not automatically executed or exposed as a public command.
         """
-
         endpoints = (
             (
                 "recent_tracks",

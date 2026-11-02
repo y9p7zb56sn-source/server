@@ -571,3 +571,39 @@ async def test_1759_native_recently_added_keeps_library_playlist_order(
     assert [item.item_id for item in result] == ["p.recent1", "p.recent2"]
     assert all(isinstance(item, Playlist) for item in result)
     api.assert_awaited_once_with("me/library/recently-added")
+
+
+@pytest.mark.asyncio
+async def test_1759_readonly_capability_summary_counts_without_personal_data(
+    provider: AppleMusicProvider,
+) -> None:
+    """Read only two fixed endpoints and return aggregate metadata."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        {"data": [{"type": "songs", "id": "private.song", "attributes": {"name": "Private Song"}}]},
+        {"data": [{"type": "library-playlists", "id": "private.playlist"}]},
+    ]
+    result = await provider.get_household_readonly_capability_summary()
+    assert result == {
+        "recent_tracks": {"state": "available", "count": 1, "types": ["songs"]},
+        "recently_added": {"state": "available", "count": 1, "types": ["library-playlists"]},
+    }
+    assert "private" not in str(result)
+    assert [call.args[0] for call in api.await_args_list] == [
+        "me/recent/played/tracks",
+        "me/library/recently-added",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_1759_readonly_capability_summary_handles_empty_and_failure(
+    provider: AppleMusicProvider,
+) -> None:
+    """Endpoint failure does not hide a successful, empty independent response."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [{"data": []}, TimeoutError()]
+    result = await provider.get_household_readonly_capability_summary()
+    assert result == {
+        "recent_tracks": {"state": "empty", "count": 0, "types": []},
+        "recently_added": {"state": "unavailable"},
+    }

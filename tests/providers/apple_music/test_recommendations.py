@@ -279,7 +279,7 @@ async def test_household_1759_mixed_recommendation_media_and_station_browse(
     items = await provider.get_recommendation_items("made_for_you")
     station_items = await provider.recommendation_manager.browse_stations()
 
-    assert [row.name for row in rows] == ["Made for You", "Recently Played Tracks"]
+    assert [row.name for row in rows] == ["Made for You", "Recently Played Tracks", "Recently Added"]
     assert not rows[0].items
     assert [type(item) for item in items] == [Playlist, Album, Artist, Track, Playlist]
     assert [item.name for item in items] == [
@@ -500,3 +500,40 @@ async def test_1759_native_history_filters_invalid_resource_shapes(
 
     assert len(result) == 0
     api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+
+
+@pytest.mark.asyncio
+async def test_1759_native_recently_added_uses_dedicated_library_endpoint(
+    provider: AppleMusicProvider,
+) -> None:
+    """An empty real Recently Added library response stays empty."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {"data": []}
+
+    rows = await provider.get_recommendations()
+    assert rows[-1].item_id == "apple_recently_added_1759"
+
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+
+    assert len(result) == 0
+    assert api.call_args_list[-1].args == ("me/library/recently-added",)
+
+
+@pytest.mark.asyncio
+async def test_1759_native_recently_added_ignores_unrelated_resources(
+    provider: AppleMusicProvider,
+) -> None:
+    """Do not mislabel catalog songs or stations as recently added library media."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [
+            {"type": "stations", "id": "ra.example", "attributes": {"name": "Station"}},
+            {"type": "songs", "id": "song.example", "attributes": {"name": "Catalog Song"}},
+            {"type": "library-albums", "id": "missing.name", "attributes": {}},
+        ]
+    }
+
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+
+    assert len(result) == 0
+    api.assert_awaited_once_with("me/library/recently-added")

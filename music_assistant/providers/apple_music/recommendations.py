@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import ClientResponseError
 from music_assistant_models.enums import MediaType
-from music_assistant_models.errors import MediaNotFoundError
+from music_assistant_models.errors import (
+    LoginFailed,
+    MediaNotFoundError,
+    RateLimited,
+    ResourceTemporarilyUnavailable,
+)
 from music_assistant_models.media_items import (
     Album,
     Artist,
@@ -162,6 +167,81 @@ class AppleMusicRecommendationManager:
                 type(err).__name__,
             )
             return None
+
+    async def get_recently_added_library(self) -> list[Album | Artist | Playlist | Track]:
+        """Read Apple's genuine mixed recently-added library resources in returned order."""
+        response = await self.api.get_data("me/library/recently-added")
+        raw_items = response.get("data", [])
+        if not isinstance(raw_items, list):
+            return []
+        # Apple can legitimately supply library-albums named "Unknown Album".
+        # A single read-only library detail request may contain better metadata.
+        placeholders = [
+            raw["id"]
+            for raw in raw_items
+            if isinstance(raw, dict)
+            and raw.get("type") == "library-albums"
+            and isinstance(raw.get("id"), str)
+            and isinstance(raw.get("attributes"), dict)
+            and isinstance(raw["attributes"].get("name"), str)
+            and raw["attributes"]["name"].strip().casefold() == "unknown album"
+        ][:20]
+        enriched: dict[str, dict[str, Any]] = {}
+        if placeholders:
+            try:
+                detail_response = await self.api.get_data(
+                    "me/library/albums", ids=",".join(dict.fromkeys(placeholders))
+                )
+                for detail in detail_response.get("data", []):
+                    if not isinstance(detail, dict) or detail.get("type") != "library-albums":
+                        continue
+                    if detail.get("id") not in placeholders:
+                        continue
+                    attributes = detail.get("attributes")
+                    if not isinstance(attributes, dict):
+                        continue
+                    name = attributes.get("name")
+                    if (
+                        isinstance(name, str)
+                        and name.strip()
+                        and name.strip().casefold() != "unknown album"
+                    ):
+                        enriched[detail["id"]] = detail
+            except (
+                ClientResponseError,
+                LoginFailed,
+                MediaNotFoundError,
+                RateLimited,
+                ResourceTemporarilyUnavailable,
+                TimeoutError,
+                ValueError,
+            ):
+                # Metadata enrichment is optional: preserve the original Apple resources.
+                pass
+        parsers = {
+            "library-albums": parse_album,
+            "library-artists": parse_artist,
+            "library-playlists": parse_playlist,
+            "library-songs": parse_track,
+        }
+        items: list[Album | Artist | Playlist | Track] = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            item = enriched.get(raw.get("id"), raw)
+            parser = parsers.get(item.get("type"))
+            attrs = item.get("attributes")
+            if parser is None or not item.get("id") or not isinstance(attrs, dict):
+                continue
+            if not attrs.get("name"):
+                continue
+            try:
+                media = parser(self.provider, item)
+            except KeyError, TypeError, ValueError:
+                continue
+            if isinstance(media, (Album, Artist, Playlist, Track)) and media.name:
+                items.append(media)
+        return items
 
     async def get_recently_played_tracks(self, limit: int = 20) -> list[Track]:
         """

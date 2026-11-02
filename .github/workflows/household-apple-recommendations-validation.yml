@@ -5,9 +5,11 @@ on:
     branches:
       - feature/1759-ma-2.10.1-local-validation
       - validation/1759-two-module-native-2101
+      - validation/1759-recently-added-native-2101
   pull_request:
     branches:
       - feature/1759-ma-2.10.1-local-validation
+      - validation/1759-two-module-native-2101
   workflow_dispatch:
 
 permissions:
@@ -91,6 +93,7 @@ jobs:
           done
           docker start -a "$container"
       - name: Prepare exact-source two-file artifact
+        if: github.ref_name == 'validation/1759-two-module-native-2101'
         shell: bash
         run: |
           set -euo pipefail
@@ -104,6 +107,7 @@ jobs:
             sha256sum -c SHA256SUMS
           )
       - name: Publish exact source-only release bundle
+        if: github.ref_name == 'validation/1759-two-module-native-2101'
         uses: actions/upload-artifact@v4
         with:
           name: ma1759-native-2101-two-file
@@ -111,3 +115,25 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
+      - name: Prepare expanded native source artifact
+        if: github.ref_name == 'validation/1759-recently-added-native-2101' || github.head_ref == 'validation/1759-recently-added-native-2101'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ma1759-expanded
+          cp music_assistant/providers/apple_music/provider.py ma1759-expanded/provider.py
+          cp music_assistant/providers/apple_music/recommendations.py ma1759-expanded/recommendations.py
+          (
+            cd ma1759-expanded
+            sha256sum provider.py recommendations.py > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+      - name: Publish expanded native source-only bundle
+        if: github.ref_name == 'validation/1759-recently-added-native-2101' || github.head_ref == 'validation/1759-recently-added-native-2101'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ma1759-native-2101-expanded
+          path: ma1759-expanded/
+          if-no-files-found: error
+          retention-days: 14

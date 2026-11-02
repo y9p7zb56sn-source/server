@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
+from aiohttp import ClientResponseError
 from music_assistant_models.media_items import (
     Album,
     Artist,
@@ -143,6 +144,13 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
                     name="Recently Played Tracks",
                 )
             )
+        rows.append(
+            RecommendationFolder(
+                item_id="apple_recently_added_1759",
+                provider=self.instance_id,
+                name="Recently Added",
+            )
+        )
         return rows
 
     async def get_recommendation_items(
@@ -155,7 +163,50 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         """
         if item_id == "apple_recent_tracks_1759":
             return UniqueList(await self.recommendation_manager.get_recently_played_tracks(20))
+        if item_id == "apple_recently_added_1759":
+            return UniqueList(await self.recommendation_manager.get_recently_added_library())
         return await self._recommendation_items_from_payload(item_id)
+
+    async def get_household_readonly_capability_summary(self) -> dict[str, object]:
+        """
+        Probe bounded Apple read endpoints through this provider's existing session.
+
+        No account identifiers, tokens, titles or resource IDs are returned.
+        This method is not automatically executed or exposed as a public command.
+        """
+        endpoints = (
+            (
+                "recent_tracks",
+                "me/recent/played/tracks",
+                {"types": "songs,library-songs", "limit": 5},
+            ),
+            ("recently_added", "me/library/recently-added", {"limit": 5}),
+        )
+        results: dict[str, object] = {}
+        for label, endpoint, params in endpoints:
+            try:
+                response = await self.api_client.get_data(endpoint, **params)
+                values = response.get("data", [])
+                if not isinstance(values, list):
+                    results[label] = {"state": "invalid_shape"}
+                    continue
+                kinds = sorted(
+                    {
+                        item["type"]
+                        for item in values
+                        if isinstance(item, dict) and isinstance(item.get("type"), str)
+                    }
+                )
+                results[label] = {
+                    "state": "available" if values else "empty",
+                    "count": min(len(values), 5),
+                    "types": kinds,
+                }
+            except ClientResponseError as exc:
+                results[label] = {"state": "http_error", "status": exc.status}
+            except Exception:
+                results[label] = {"state": "unavailable"}
+        return results
 
     # ------------------------------------------------------------------
     # Media item getters

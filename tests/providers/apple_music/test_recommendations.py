@@ -97,11 +97,13 @@ async def test_get_recommendations_returns_rows_without_items(
         "made_for_you",
         "stations_for_you",
         "apple_recent_tracks_1759",
+        "apple_recently_added_1759",
     ]
     assert [row.name for row in rows] == [
         "Made for You",
         "Stations for You",
         "Recently Played Tracks",
+        "Recently Added",
     ]
     assert all(row.provider == INSTANCE_ID for row in rows)
     assert all(not row.items for row in rows)
@@ -279,7 +281,11 @@ async def test_household_1759_mixed_recommendation_media_and_station_browse(
     items = await provider.get_recommendation_items("made_for_you")
     station_items = await provider.recommendation_manager.browse_stations()
 
-    assert [row.name for row in rows] == ["Made for You", "Recently Played Tracks"]
+    assert [row.name for row in rows] == [
+        "Made for You",
+        "Recently Played Tracks",
+        "Recently Added",
+    ]
     assert not rows[0].items
     assert [type(item) for item in items] == [Playlist, Album, Artist, Track, Playlist]
     assert [item.name for item in items] == [
@@ -371,7 +377,7 @@ async def test_1759_native_history_row_is_distinct_and_lazy(provider: AppleMusic
     """Native provider exposes history without querying history during row enumeration."""
     api = cast("AsyncMock", provider.api_client.get_data)
     rows = await provider.get_recommendations()
-    assert [row.item_id for row in rows][-1] == "apple_recent_tracks_1759"
+    assert [row.item_id for row in rows][-2] == "apple_recent_tracks_1759"
     api.assert_awaited_once()
     await asyncio.sleep(0)
     result = await provider.get_recommendation_items("made_for_you")
@@ -500,3 +506,198 @@ async def test_1759_native_history_filters_invalid_resource_shapes(
 
     assert len(result) == 0
     api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+
+
+@pytest.mark.asyncio
+async def test_1759_native_recently_added_uses_dedicated_library_endpoint(
+    provider: AppleMusicProvider,
+) -> None:
+    """An empty real Recently Added library response stays empty."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {"data": []}
+
+    rows = await provider.get_recommendations()
+    assert rows[-1].item_id == "apple_recently_added_1759"
+
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+
+    assert len(result) == 0
+    assert api.call_args_list[-1].args == ("me/library/recently-added",)
+
+
+@pytest.mark.asyncio
+async def test_1759_native_recently_added_ignores_unrelated_resources(
+    provider: AppleMusicProvider,
+) -> None:
+    """Do not mislabel catalog songs or stations as recently added library media."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [
+            {"type": "stations", "id": "ra.example", "attributes": {"name": "Station"}},
+            {"type": "songs", "id": "song.example", "attributes": {"name": "Catalog Song"}},
+            {"type": "library-albums", "id": "missing.name", "attributes": {}},
+        ]
+    }
+
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+
+    assert len(result) == 0
+    api.assert_awaited_once_with("me/library/recently-added")
+
+
+@pytest.mark.asyncio
+async def test_1759_native_recently_added_keeps_library_playlist_order(
+    provider: AppleMusicProvider,
+) -> None:
+    """Recently Added retains Apple's order and correct editable library identities."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [
+            {
+                "type": "library-playlists",
+                "id": "p.recent1",
+                "attributes": {"name": "Most Recent", "canEdit": True},
+            },
+            {
+                "type": "library-playlists",
+                "id": "p.recent2",
+                "attributes": {"name": "Earlier", "canEdit": False},
+            },
+        ]
+    }
+
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+
+    assert [item.item_id for item in result] == ["p.recent1", "p.recent2"]
+    assert all(isinstance(item, Playlist) for item in result)
+    api.assert_awaited_once_with("me/library/recently-added")
+
+
+@pytest.mark.asyncio
+async def test_1759_readonly_capability_summary_counts_without_personal_data(
+    provider: AppleMusicProvider,
+) -> None:
+    """Read only two fixed endpoints and return aggregate metadata."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        {"data": [{"type": "songs", "id": "private.song", "attributes": {"name": "Private Song"}}]},
+        {"data": [{"type": "library-playlists", "id": "private.playlist"}]},
+    ]
+    result = await provider.get_household_readonly_capability_summary()
+    assert result == {
+        "recent_tracks": {"state": "available", "count": 1, "types": ["songs"]},
+        "recently_added": {"state": "available", "count": 1, "types": ["library-playlists"]},
+    }
+    assert "private" not in str(result)
+    assert [call.args[0] for call in api.await_args_list] == [
+        "me/recent/played/tracks",
+        "me/library/recently-added",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_1759_readonly_capability_summary_handles_empty_and_failure(
+    provider: AppleMusicProvider,
+) -> None:
+    """Endpoint failure does not hide a successful, empty independent response."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [{"data": []}, TimeoutError()]
+    result = await provider.get_household_readonly_capability_summary()
+    assert result == {
+        "recent_tracks": {"state": "empty", "count": 0, "types": []},
+        "recently_added": {"state": "unavailable"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_enriches_unknown_album_without_reordering(
+    provider: AppleMusicProvider,
+) -> None:
+    """A bounded Apple library detail read improves a placeholder in its original slot."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        {
+            "data": [
+                {
+                    "type": "library-albums",
+                    "id": "l.first",
+                    "attributes": {"name": "First Real Album", "artistName": "Artist One"},
+                },
+                {
+                    "type": "library-albums",
+                    "id": "l.placeholder",
+                    "attributes": {"name": "Unknown Album"},
+                },
+                {
+                    "type": "library-albums",
+                    "id": "l.last",
+                    "attributes": {"name": "Last Real Album", "artistName": "Artist Two"},
+                },
+            ]
+        },
+        {
+            "data": [
+                {
+                    "type": "library-albums",
+                    "id": "l.placeholder",
+                    "attributes": {
+                        "name": "Recovered Album",
+                        "artistName": "Recovered Artist",
+                    },
+                }
+            ]
+        },
+    ]
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+    assert [item.name for item in result] == [
+        "First Real Album",
+        "Recovered Album",
+        "Last Real Album",
+    ]
+    assert [item.item_id for item in result] == ["l.first", "l.placeholder", "l.last"]
+    assert [call.args[0] for call in api.await_args_list] == [
+        "me/library/recently-added",
+        "me/library/albums",
+    ]
+    assert api.await_args_list[1].kwargs == {"ids": "l.placeholder"}
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_preserves_unresolved_unknown_album(
+    provider: AppleMusicProvider,
+) -> None:
+    """Do not invent album details when Apple does not resolve a placeholder."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    raw = {
+        "type": "library-albums",
+        "id": "l.placeholder",
+        "attributes": {"name": "Unknown Album"},
+    }
+    api.side_effect = [{"data": [raw]}, {"data": [raw]}]
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+    assert len(result) == 1
+    assert result[0].name == "Unknown Album"
+    assert api.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_resilient_to_enrichment_timeout(
+    provider: AppleMusicProvider,
+) -> None:
+    """An optional metadata request failure cannot remove original recent albums."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        {
+            "data": [
+                {
+                    "type": "library-albums",
+                    "id": "l.placeholder",
+                    "attributes": {"name": "Unknown Album"},
+                }
+            ]
+        },
+        TimeoutError(),
+    ]
+    result = await provider.get_recommendation_items("apple_recently_added_1759")
+    assert [item.name for item in result] == ["Unknown Album"]
+    assert api.await_count == 2

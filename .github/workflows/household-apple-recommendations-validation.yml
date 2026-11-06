@@ -6,6 +6,7 @@ on:
       - feature/1759-ma-2.10.1-local-validation
       - validation/1759-two-module-native-2101
       - validation/1759-recently-added-native-2101
+      - feature/1759-paginated-native-recent-tracks
   pull_request:
     branches:
       - feature/1759-ma-2.10.1-local-validation

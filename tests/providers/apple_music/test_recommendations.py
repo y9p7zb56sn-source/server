@@ -736,10 +736,7 @@ async def test_1759_recent_tracks_more_is_lazy_and_preserves_apple_order(
     api.side_effect = [
         {
             "data": [_recent_track_record("song.9"), _recent_track_record("song.1")],
-            "next": (
-                "/v1/me/recent/played/tracks?offset=30"
-                "&types=songs%2Clibrary-songs&limit=30"
-            ),
+            "next": ("/v1/me/recent/played/tracks?offset=30&types=songs%2Clibrary-songs&limit=30"),
         },
         {"data": [_recent_track_record("song.6"), _recent_track_record("song.3")]},
     ]
@@ -760,7 +757,9 @@ async def test_1759_recent_tracks_more_is_lazy_and_preserves_apple_order(
         "limit": 30,
     }
     assert api.await_args_list[1].kwargs == {
-        "types": "songs,library-songs", "limit": 30, "offset": "30"
+        "types": "songs,library-songs",
+        "limit": 30,
+        "offset": "30",
     }
 
 
@@ -794,12 +793,13 @@ async def test_1759_recent_tracks_incomplete_page_does_not_hide_next(
     ],
 )
 async def test_1759_recent_tracks_reject_untrusted_or_stale_next(
-    provider: AppleMusicProvider, bad_next: str,
+    provider: AppleMusicProvider,
+    bad_next: str,
 ) -> None:
     """Never follow arbitrary URLs or replay a non-advancing Apple page."""
     api = cast("AsyncMock", provider.api_client.get_data)
     api.return_value = {"data": [_recent_track_record("song.1")], "next": bad_next}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.get_recommendation_items("apple_recent_tracks_1759")
     api.assert_awaited_once()
 
@@ -832,11 +832,12 @@ async def test_1759_recent_tracks_next_can_extend_past_first_two_pages(
     ],
 )
 async def test_1759_recent_tracks_reject_invalid_browse_paths(
-    provider: AppleMusicProvider, bad_path: str,
+    provider: AppleMusicProvider,
+    bad_path: str,
 ) -> None:
     """Reject malformed public browse paths before any authenticated Apple GET."""
     api = cast("AsyncMock", provider.api_client.get_data)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.browse(f"{INSTANCE_ID}://{bad_path}")
     api.assert_not_awaited()
 
@@ -913,7 +914,8 @@ async def test_1759_recently_added_does_not_treat_filtered_page_as_end(
     ],
 )
 async def test_1759_recently_added_rejects_invalid_continuations(
-    provider: AppleMusicProvider, bad_next: str,
+    provider: AppleMusicProvider,
+    bad_next: str,
 ) -> None:
     """Never use arbitrary caller-controlled next paths or bad Apple cursors."""
     api = cast("AsyncMock", provider.api_client.get_data)
@@ -921,7 +923,7 @@ async def test_1759_recently_added_rejects_invalid_continuations(
         "data": [_recently_added_album_record("l.one")],
         "next": bad_next,
     }
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.get_recommendation_items("apple_recently_added_1759")
     api.assert_awaited_once()
 
@@ -952,11 +954,12 @@ async def test_1759_recently_added_can_extend_past_two_pages(
     ],
 )
 async def test_1759_recently_added_rejects_invalid_browse_paths(
-    provider: AppleMusicProvider, bad_path: str,
+    provider: AppleMusicProvider,
+    bad_path: str,
 ) -> None:
     """Reject bad browse offsets without making an Apple API request."""
     api = cast("AsyncMock", provider.api_client.get_data)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.browse(f"{INSTANCE_ID}://{bad_path}")
     api.assert_not_awaited()
 

@@ -189,7 +189,7 @@ class AppleMusicRecommendationManager:
             raise ResourceTemporarilyUnavailable("Incomplete Apple recently added page")
         raw_items = response.get("data", [])
         if not isinstance(raw_items, list):
-            raise ValueError("Invalid Apple recently added response")
+            raise TypeError("Invalid Apple recently added response")
         # Apple can legitimately supply library-albums named "Unknown Album".
         # A single read-only library detail request may contain better metadata.
         placeholders = [
@@ -209,10 +209,7 @@ class AppleMusicRecommendationManager:
                     "me/library/albums", ids=",".join(dict.fromkeys(placeholders))
                 )
                 for detail in detail_response.get("data", []):
-                    if (
-                        not isinstance(detail, dict)
-                        or detail.get("type") != "library-albums"
-                    ):
+                    if not isinstance(detail, dict) or detail.get("type") != "library-albums":
                         continue
                     if detail.get("id") not in placeholders:
                         continue
@@ -256,29 +253,22 @@ class AppleMusicRecommendationManager:
                 continue
             try:
                 media = parser(self.provider, item)
-            except (KeyError, TypeError, ValueError):
+            except KeyError, TypeError, ValueError:
                 continue
             if isinstance(media, (Album, Artist, Playlist, Track)) and media.name:
                 items.append(media)
         return items, self._recently_added_next_offset(response, offset)
 
     @staticmethod
-    def _recently_added_next_offset(
-        response: dict[str, Any], offset: int
-    ) -> int | None:
+    def _recently_added_next_offset(response: dict[str, Any], offset: int) -> int | None:
         """Read only Apple's same-endpoint pagination offset, never a supplied URL."""
         next_path = response.get("next")
         if next_path is None:
             return None
         if not isinstance(next_path, str):
-            raise ValueError("Invalid Apple recently added pagination")
+            raise TypeError("Invalid Apple recently added pagination")
         url = urlsplit(next_path)
-        if (
-            url.scheme
-            or url.netloc
-            or url.fragment
-            or url.path != "/v1/me/library/recently-added"
-        ):
+        if url.scheme or url.netloc or url.fragment or url.path != "/v1/me/library/recently-added":
             raise ValueError("Invalid Apple recently added pagination")
         params = parse_qs(url.query, keep_blank_values=True)
         if set(params) != {"offset"}:
@@ -298,28 +288,18 @@ class AppleMusicRecommendationManager:
         if next_path is None:
             return None
         if not isinstance(next_path, str):
-            raise ValueError("Invalid Apple recent tracks pagination")
+            raise TypeError("Invalid Apple recent tracks pagination")
         url = urlsplit(next_path)
-        if (
-            url.scheme
-            or url.netloc
-            or url.fragment
-            or url.path != "/v1/me/recent/played/tracks"
-        ):
+        if url.scheme or url.netloc or url.fragment or url.path != "/v1/me/recent/played/tracks":
             raise ValueError("Invalid Apple recent tracks pagination")
         params = parse_qs(url.query, keep_blank_values=True)
         if set(params) - {"offset", "limit", "types"}:
             raise ValueError("Unexpected Apple recent tracks pagination parameters")
         offsets = params.get("offset")
-        if (
-            offsets is None
-            or len(offsets) != 1
-            or re.fullmatch(r"[0-9]+", offsets[0]) is None
-        ):
+        if offsets is None or len(offsets) != 1 or re.fullmatch(r"[0-9]+", offsets[0]) is None:
             raise ValueError("Invalid Apple recent tracks offset")
         if "limit" in params and (
-            len(params["limit"]) != 1
-            or re.fullmatch(r"[0-9]+", params["limit"][0]) is None
+            len(params["limit"]) != 1 or re.fullmatch(r"[0-9]+", params["limit"][0]) is None
         ):
             raise ValueError("Invalid Apple recent tracks limit")
         if "types" in params and params["types"] != ["songs,library-songs"]:
@@ -333,11 +313,7 @@ class AppleMusicRecommendationManager:
         self, limit: int = 30, offset: int = 0
     ) -> tuple[list[Track], int | None]:
         """Retrieve only one genuine Apple track-history page and its continuation."""
-        if (
-            isinstance(limit, bool)
-            or not isinstance(limit, int)
-            or not 1 <= limit <= 30
-        ):
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 30:
             raise ValueError("Apple recent tracks page size must be between 1 and 30")
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError("Invalid Apple recent tracks offset")
@@ -349,24 +325,17 @@ class AppleMusicRecommendationManager:
             raise ResourceTemporarilyUnavailable("Incomplete Apple recent tracks page")
         raw_items = response.get("data", [])
         if not isinstance(raw_items, list):
-            raise ValueError("Invalid Apple recent tracks response")
+            raise TypeError("Invalid Apple recent tracks response")
         tracks: list[Track] = []
         for raw in raw_items:
-            if (
-                not isinstance(raw, dict)
-                or raw.get("type") not in ("songs", "library-songs")
-            ):
+            if not isinstance(raw, dict) or raw.get("type") not in ("songs", "library-songs"):
                 continue
             attrs = raw.get("attributes")
-            if (
-                not raw.get("id")
-                or not isinstance(attrs, dict)
-                or not attrs.get("name")
-            ):
+            if not raw.get("id") or not isinstance(attrs, dict) or not attrs.get("name"):
                 continue
             try:
                 parsed = parse_track(self.provider, raw)
-            except (KeyError, TypeError, ValueError):
+            except KeyError, TypeError, ValueError:
                 continue
             if isinstance(parsed, Track):
                 tracks.append(parsed)

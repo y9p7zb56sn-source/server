@@ -244,7 +244,7 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
                 "me/recent/played/tracks",
                 {"types": "songs,library-songs", "limit": 5},
             ),
-            ("recently_added", "me/library/recently-added", {"limit": 5}),
+            ("recently_added", "me/library/recently-added", {}),
         )
         results: dict[str, object] = {}
         for label, endpoint, params in endpoints:

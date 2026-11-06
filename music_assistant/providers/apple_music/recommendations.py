@@ -171,11 +171,21 @@ class AppleMusicRecommendationManager:
             return None
 
     async def get_recently_added_library(self) -> list[Album | Artist | Playlist | Track]:
-        """Read Apple's genuine mixed recently-added library resources in returned order."""
-        response = await self.api.get_data("me/library/recently-added")
+        """Read the first Apple recently-added library page for existing callers."""
+        items, _ = await self.get_recently_added_library_page()
+        return items
+
+    async def get_recently_added_library_page(
+        self, offset: int = 0
+    ) -> tuple[list[Album | Artist | Playlist | Track], int | None]:
+        """Read one genuine Apple library-chronology page and its continuation."""
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("Invalid Apple recently added offset")
+        params = {"offset": str(offset)} if offset else {}
+        response = await self.api.get_data("me/library/recently-added", **params)
         raw_items = response.get("data", [])
         if not isinstance(raw_items, list):
-            return []
+            raise ValueError("Invalid Apple recently added response")
         # Apple can legitimately supply library-albums named "Unknown Album".
         # A single read-only library detail request may contain better metadata.
         placeholders = [
@@ -243,7 +253,34 @@ class AppleMusicRecommendationManager:
                 continue
             if isinstance(media, (Album, Artist, Playlist, Track)) and media.name:
                 items.append(media)
-        return items
+        return items, self._recently_added_next_offset(response, offset)
+
+    @staticmethod
+    def _recently_added_next_offset(response: dict[str, Any], offset: int) -> int | None:
+        """Read only Apple's same-endpoint pagination offset, never a supplied URL."""
+        next_path = response.get("next")
+        if next_path is None:
+            return None
+        if not isinstance(next_path, str):
+            raise ValueError("Invalid Apple recently added pagination")
+        url = urlsplit(next_path)
+        if (
+            url.scheme
+            or url.netloc
+            or url.fragment
+            or url.path != "/v1/me/library/recently-added"
+        ):
+            raise ValueError("Invalid Apple recently added pagination")
+        params = parse_qs(url.query, keep_blank_values=True)
+        if set(params) != {"offset"}:
+            raise ValueError("Unexpected Apple recently added pagination parameters")
+        offsets = params["offset"]
+        if len(offsets) != 1 or re.fullmatch(r"[0-9]+", offsets[0]) is None:
+            raise ValueError("Invalid Apple recently added offset")
+        next_offset = int(offsets[0])
+        if next_offset <= offset:
+            raise ValueError("Non-advancing Apple recently added pagination")
+        return next_offset
 
     @staticmethod
     def _recent_tracks_next_offset(response: dict[str, Any], offset: int) -> int | None:

@@ -601,6 +601,8 @@ async def test_1759_readonly_capability_summary_counts_without_personal_data(
         "me/recent/played/tracks",
         "me/library/recently-added",
     ]
+    assert api.await_args_list[0].kwargs == {"types": "songs,library-songs", "limit": 5}
+    assert api.await_args_list[1].kwargs == {}
 
 
 @pytest.mark.asyncio

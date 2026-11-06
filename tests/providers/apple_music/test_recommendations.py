@@ -736,7 +736,10 @@ async def test_1759_recent_tracks_more_is_lazy_and_preserves_apple_order(
     api.side_effect = [
         {
             "data": [_recent_track_record("song.9"), _recent_track_record("song.1")],
-            "next": "/v1/me/recent/played/tracks?offset=30&types=songs%2Clibrary-songs&limit=30",
+            "next": (
+                "/v1/me/recent/played/tracks?offset=30"
+                "&types=songs%2Clibrary-songs&limit=30"
+            ),
         },
         {"data": [_recent_track_record("song.6"), _recent_track_record("song.3")]},
     ]
@@ -752,7 +755,10 @@ async def test_1759_recent_tracks_more_is_lazy_and_preserves_apple_order(
     assert [item.item_id for item in older] == ["song.6", "song.3"]
     assert all(isinstance(item, Track) for item in older)
     assert api.await_count == 2
-    assert api.await_args_list[0].kwargs == {"types": "songs,library-songs", "limit": 30}
+    assert api.await_args_list[0].kwargs == {
+        "types": "songs,library-songs",
+        "limit": 30,
+    }
     assert api.await_args_list[1].kwargs == {
         "types": "songs,library-songs", "limit": 30, "offset": "30"
     }

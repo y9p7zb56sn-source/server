@@ -7,7 +7,15 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from music_assistant_models.media_items import Album, Artist, Playlist, Track, UniqueList
+from music_assistant_models.errors import ResourceTemporarilyUnavailable
+from music_assistant_models.media_items import (
+    Album,
+    Artist,
+    BrowseFolder,
+    Playlist,
+    Track,
+    UniqueList,
+)
 
 from music_assistant.providers.apple_music.provider import AppleMusicProvider
 
@@ -411,7 +419,7 @@ async def test_1759_native_history_uses_track_endpoint_and_parser(
     result = await provider.get_recommendation_items("apple_recent_tracks_1759")
     assert [item.item_id for item in result] == ["song.1"]
     assert all(isinstance(item, Track) for item in result)
-    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=30)
 
 
 @pytest.mark.asyncio
@@ -423,7 +431,7 @@ async def test_1759_history_failure_is_not_silently_relabelled(
     api.side_effect = PermissionError("not authorised")
     with pytest.raises(PermissionError):
         await provider.get_recommendation_items("apple_recent_tracks_1759")
-    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=30)
 
 
 @pytest.mark.asyncio
@@ -437,7 +445,7 @@ async def test_1759_native_history_empty_is_not_mixed_recent(
     result = await provider.get_recommendation_items("apple_recent_tracks_1759")
 
     assert len(result) == 0
-    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=30)
 
 
 @pytest.mark.asyncio
@@ -470,7 +478,7 @@ async def test_1759_native_history_preserves_api_order(
 
     assert [item.item_id for item in result] == ["song.9", "song.2", "song.5"]
     assert all(isinstance(item, Track) for item in result)
-    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=30)
 
 
 @pytest.mark.asyncio
@@ -484,7 +492,7 @@ async def test_1759_native_history_does_not_hide_rate_limit(
     with pytest.raises(TimeoutError):
         await provider.get_recommendation_items("apple_recent_tracks_1759")
 
-    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=30)
 
 
 @pytest.mark.asyncio
@@ -505,7 +513,7 @@ async def test_1759_native_history_filters_invalid_resource_shapes(
     result = await provider.get_recommendation_items("apple_recent_tracks_1759")
 
     assert len(result) == 0
-    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=20)
+    api.assert_awaited_once_with("me/recent/played/tracks", types="songs,library-songs", limit=30)
 
 
 @pytest.mark.asyncio
@@ -593,6 +601,8 @@ async def test_1759_readonly_capability_summary_counts_without_personal_data(
         "me/recent/played/tracks",
         "me/library/recently-added",
     ]
+    assert api.await_args_list[0].kwargs == {"types": "songs,library-songs", "limit": 5}
+    assert api.await_args_list[1].kwargs == {}
 
 
 @pytest.mark.asyncio
@@ -701,3 +711,284 @@ async def test_1759_recently_added_resilient_to_enrichment_timeout(
     result = await provider.get_recommendation_items("apple_recently_added_1759")
     assert [item.name for item in result] == ["Unknown Album"]
     assert api.await_count == 2
+
+
+def _recent_track_record(identifier: str) -> dict[str, Any]:
+    """Synthetic Apple track resource with no real account data."""
+    return {
+        "type": "songs",
+        "id": identifier,
+        "attributes": {
+            "name": f"Song {identifier}",
+            "artistName": "Example Artist",
+            "durationInMillis": 180000,
+            "playParams": {"id": identifier, "kind": "song"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_1759_recent_tracks_more_is_lazy_and_preserves_apple_order(
+    provider: AppleMusicProvider,
+) -> None:
+    """The next Apple page is fetched only when its actual browse folder opens."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        {
+            "data": [_recent_track_record("song.9"), _recent_track_record("song.1")],
+            "next": ("/v1/me/recent/played/tracks?offset=30&types=songs%2Clibrary-songs&limit=30"),
+        },
+        {"data": [_recent_track_record("song.6"), _recent_track_record("song.3")]},
+    ]
+
+    first = await provider.get_recommendation_items("apple_recent_tracks_1759")
+    assert [item.item_id for item in first[:2]] == ["song.9", "song.1"]
+    assert isinstance(first[-1], BrowseFolder)
+    assert first[-1].name == "Load more recent tracks"
+    assert first[-1].path == f"{INSTANCE_ID}://recent-tracks/30"
+    assert api.await_count == 1
+
+    older = await provider.browse(first[-1].path)
+    assert [item.item_id for item in older] == ["song.6", "song.3"]
+    assert all(isinstance(item, Track) for item in older)
+    assert api.await_count == 2
+    assert api.await_args_list[0].kwargs == {
+        "types": "songs,library-songs",
+        "limit": 30,
+    }
+    assert api.await_args_list[1].kwargs == {
+        "types": "songs,library-songs",
+        "limit": 30,
+        "offset": "30",
+    }
+
+
+@pytest.mark.asyncio
+async def test_1759_recent_tracks_incomplete_page_does_not_hide_next(
+    provider: AppleMusicProvider,
+) -> None:
+    """Filtering malformed songs cannot incorrectly end authentic Apple pagination."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [{"type": "stations", "id": "ra.1", "attributes": {"name": "Station"}}],
+        "next": "/v1/me/recent/played/tracks?offset=30",
+    }
+    items = await provider.get_recommendation_items("apple_recent_tracks_1759")
+    assert len(items) == 1
+    assert isinstance(items[0], BrowseFolder)
+    assert items[0].path.endswith("/30")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_next",
+    [
+        "https://evil.invalid/v1/me/recent/played/tracks?offset=30",
+        "/v1/me/library/recently-added?offset=30",
+        "/v1/me/recent/played/tracks?offset=0",
+        "/v1/me/recent/played/tracks?offset=30&offset=60",
+        "/v1/me/recent/played/tracks?offset=bad",
+        "/v1/me/recent/played/tracks?offset=30&types=stations",
+        "/v1/me/recent/played/tracks?offset=30&unexpected=1",
+    ],
+)
+async def test_1759_recent_tracks_reject_untrusted_or_stale_next(
+    provider: AppleMusicProvider,
+    bad_next: str,
+) -> None:
+    """Never follow arbitrary URLs or replay a non-advancing Apple page."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {"data": [_recent_track_record("song.1")], "next": bad_next}
+    with pytest.raises(ValueError, match=r".+"):
+        await provider.get_recommendation_items("apple_recent_tracks_1759")
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_1759_recent_tracks_next_can_extend_past_first_two_pages(
+    provider: AppleMusicProvider,
+) -> None:
+    """There is no arbitrary total result cap when Apple's next page exists."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [_recent_track_record("song.older")],
+        "next": "/v1/me/recent/played/tracks?offset=90",
+    }
+    items = await provider.browse(f"{INSTANCE_ID}://recent-tracks/60")
+    assert [item.item_id for item in items] == ["song.older", "recent-tracks-more-90"]
+    api.assert_awaited_once_with(
+        "me/recent/played/tracks", types="songs,library-songs", limit=30, offset="60"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "recent-tracks/abc",
+        "recent-tracks/-30",
+        "recent-tracks/1/extra",
+        "recent-tracks/9999999999999",
+    ],
+)
+async def test_1759_recent_tracks_reject_invalid_browse_paths(
+    provider: AppleMusicProvider,
+    bad_path: str,
+) -> None:
+    """Reject malformed public browse paths before any authenticated Apple GET."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    with pytest.raises(ValueError, match=r".+"):
+        await provider.browse(f"{INSTANCE_ID}://{bad_path}")
+    api.assert_not_awaited()
+
+
+def _recently_added_album_record(identifier: str) -> dict[str, Any]:
+    """One synthetic, correctly typed Apple library album."""
+    return {
+        "type": "library-albums",
+        "id": identifier,
+        "attributes": {"name": f"Album {identifier}", "artistName": "Example Artist"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_more_is_lazy_and_preserves_apple_order(
+    provider: AppleMusicProvider,
+) -> None:
+    """Only follow an Apple library-chronology next when the user opens it."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        {
+            "data": [
+                _recently_added_album_record("l.newer"),
+                _recently_added_album_record("l.new"),
+            ],
+            "next": "/v1/me/library/recently-added?offset=10",
+        },
+        {"data": [_recently_added_album_record("l.older")]},
+    ]
+
+    first = await provider.get_recommendation_items("apple_recently_added_1759")
+    assert [item.item_id for item in first[:2]] == ["l.newer", "l.new"]
+    assert isinstance(first[-1], BrowseFolder)
+    assert first[-1].name == "Load more recently added"
+    assert first[-1].path == f"{INSTANCE_ID}://recently-added/10"
+    assert api.await_count == 1
+
+    second = await provider.browse(first[-1].path)
+    assert [item.item_id for item in second] == ["l.older"]
+    assert isinstance(second[0], Album)
+    assert api.await_count == 2
+    assert api.await_args_list[0].args == ("me/library/recently-added",)
+    assert api.await_args_list[0].kwargs == {}
+    assert api.await_args_list[1].args == ("me/library/recently-added",)
+    assert api.await_args_list[1].kwargs == {"offset": "10"}
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_does_not_treat_filtered_page_as_end(
+    provider: AppleMusicProvider,
+) -> None:
+    """Unsupported resources on an intermediate page must not hide Apple next."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [{"type": "stations", "id": "ra.1", "attributes": {"name": "Radio"}}],
+        "next": "/v1/me/library/recently-added?offset=10",
+    }
+    items = await provider.get_recommendation_items("apple_recently_added_1759")
+    assert len(items) == 1
+    assert isinstance(items[0], BrowseFolder)
+    assert items[0].path.endswith("/10")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_next",
+    [
+        "https://evil.invalid/v1/me/library/recently-added?offset=10",
+        "/v1/me/recent/played/tracks?offset=10",
+        "/v1/me/library/recently-added?offset=0",
+        "/v1/me/library/recently-added?offset=10&offset=20",
+        "/v1/me/library/recently-added?offset=bad",
+        "/v1/me/library/recently-added?offset=10&unexpected=1",
+    ],
+)
+async def test_1759_recently_added_rejects_invalid_continuations(
+    provider: AppleMusicProvider,
+    bad_next: str,
+) -> None:
+    """Never use arbitrary caller-controlled next paths or bad Apple cursors."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [_recently_added_album_record("l.one")],
+        "next": bad_next,
+    }
+    with pytest.raises(ValueError, match=r".+"):
+        await provider.get_recommendation_items("apple_recently_added_1759")
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_1759_recently_added_can_extend_past_two_pages(
+    provider: AppleMusicProvider,
+) -> None:
+    """Do not impose a maximum total library-history depth."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {
+        "data": [_recently_added_album_record("l.older")],
+        "next": "/v1/me/library/recently-added?offset=30",
+    }
+    result = await provider.browse(f"{INSTANCE_ID}://recently-added/20")
+    assert [item.item_id for item in result] == ["l.older", "recently-added-more-30"]
+    api.assert_awaited_once_with("me/library/recently-added", offset="20")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_path",
+    [
+        "recently-added/abc",
+        "recently-added/-10",
+        "recently-added/10/extra",
+        "recently-added/9999999999999",
+    ],
+)
+async def test_1759_recently_added_rejects_invalid_browse_paths(
+    provider: AppleMusicProvider,
+    bad_path: str,
+) -> None:
+    """Reject bad browse offsets without making an Apple API request."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    with pytest.raises(ValueError, match=r".+"):
+        await provider.browse(f"{INSTANCE_ID}://{bad_path}")
+    api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("browse_path", "endpoint", "kwargs"),
+    [
+        (
+            "recent-tracks/30",
+            "me/recent/played/tracks",
+            {"types": "songs,library-songs", "limit": 30, "offset": "30"},
+        ),
+        (
+            "recently-added/10",
+            "me/library/recently-added",
+            {"offset": "10"},
+        ),
+    ],
+)
+async def test_1759_incomplete_later_page_is_not_silent_end_of_history(
+    provider: AppleMusicProvider,
+    browse_path: str,
+    endpoint: str,
+    kwargs: dict[str, Any],
+) -> None:
+    """A promised next page with missing data is a temporary error, not exhaustion."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {}
+    with pytest.raises(ResourceTemporarilyUnavailable):
+        await provider.browse(f"{INSTANCE_ID}://{browse_path}")
+    api.assert_awaited_once_with(endpoint, **kwargs)

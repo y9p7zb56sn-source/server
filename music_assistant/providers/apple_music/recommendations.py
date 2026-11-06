@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 from aiohttp import ClientResponseError
 from music_assistant_models.enums import MediaType
@@ -168,12 +170,26 @@ class AppleMusicRecommendationManager:
             )
             return None
 
-    async def get_recently_added_library(self) -> list[Album | Artist | Playlist | Track]:
-        """Read Apple's genuine mixed recently-added library resources in returned order."""
-        response = await self.api.get_data("me/library/recently-added")
+    async def get_recently_added_library(
+        self,
+    ) -> list[Album | Artist | Playlist | Track]:
+        """Read the first Apple recently-added library page for existing callers."""
+        items, _ = await self.get_recently_added_library_page()
+        return items
+
+    async def get_recently_added_library_page(
+        self, offset: int = 0
+    ) -> tuple[list[Album | Artist | Playlist | Track], int | None]:
+        """Read one genuine Apple library-chronology page and its continuation."""
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("Invalid Apple recently added offset")
+        params = {"offset": str(offset)} if offset else {}
+        response = await self.api.get_data("me/library/recently-added", **params)
+        if offset and "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recently added page")
         raw_items = response.get("data", [])
         if not isinstance(raw_items, list):
-            return []
+            raise TypeError("Invalid Apple recently added response")
         # Apple can legitimately supply library-albums named "Unknown Album".
         # A single read-only library detail request may contain better metadata.
         placeholders = [
@@ -241,22 +257,77 @@ class AppleMusicRecommendationManager:
                 continue
             if isinstance(media, (Album, Artist, Playlist, Track)) and media.name:
                 items.append(media)
-        return items
+        return items, self._recently_added_next_offset(response, offset)
 
-    async def get_recently_played_tracks(self, limit: int = 20) -> list[Track]:
-        """
-        Read actual recent song history; never substitute recommendation stations.
+    @staticmethod
+    def _recently_added_next_offset(response: dict[str, Any], offset: int) -> int | None:
+        """Read only Apple's same-endpoint pagination offset, never a supplied URL."""
+        next_path = response.get("next")
+        if next_path is None:
+            return None
+        if not isinstance(next_path, str):
+            raise TypeError("Invalid Apple recently added pagination")
+        url = urlsplit(next_path)
+        if url.scheme or url.netloc or url.fragment or url.path != "/v1/me/library/recently-added":
+            raise ValueError("Invalid Apple recently added pagination")
+        params = parse_qs(url.query, keep_blank_values=True)
+        if set(params) != {"offset"}:
+            raise ValueError("Unexpected Apple recently added pagination parameters")
+        offsets = params["offset"]
+        if len(offsets) != 1 or re.fullmatch(r"[0-9]+", offsets[0]) is None:
+            raise ValueError("Invalid Apple recently added offset")
+        next_offset = int(offsets[0])
+        if next_offset <= offset:
+            raise ValueError("Non-advancing Apple recently added pagination")
+        return next_offset
 
-        This is source-only until a supported Music Assistant provider API entry
-        point has been selected and authorised for the running installation.
-        """
-        if not 1 <= limit <= 30:
-            raise ValueError("Apple recent tracks limit must be between 1 and 30")
-        response = await self.api.get_data(
-            "me/recent/played/tracks", types="songs,library-songs", limit=limit
-        )
+    @staticmethod
+    def _recent_tracks_next_offset(response: dict[str, Any], offset: int) -> int | None:
+        """Use only Apple's documented relative next-page path, never a caller URL."""
+        next_path = response.get("next")
+        if next_path is None:
+            return None
+        if not isinstance(next_path, str):
+            raise TypeError("Invalid Apple recent tracks pagination")
+        url = urlsplit(next_path)
+        if url.scheme or url.netloc or url.fragment or url.path != "/v1/me/recent/played/tracks":
+            raise ValueError("Invalid Apple recent tracks pagination")
+        params = parse_qs(url.query, keep_blank_values=True)
+        if set(params) - {"offset", "limit", "types"}:
+            raise ValueError("Unexpected Apple recent tracks pagination parameters")
+        offsets = params.get("offset")
+        if offsets is None or len(offsets) != 1 or re.fullmatch(r"[0-9]+", offsets[0]) is None:
+            raise ValueError("Invalid Apple recent tracks offset")
+        if "limit" in params and (
+            len(params["limit"]) != 1 or re.fullmatch(r"[0-9]+", params["limit"][0]) is None
+        ):
+            raise ValueError("Invalid Apple recent tracks limit")
+        if "types" in params and params["types"] != ["songs,library-songs"]:
+            raise ValueError("Unexpected Apple recent tracks types")
+        next_offset = int(offsets[0])
+        if next_offset <= offset:
+            raise ValueError("Non-advancing Apple recent tracks pagination")
+        return next_offset
+
+    async def get_recently_played_tracks_page(
+        self, limit: int = 30, offset: int = 0
+    ) -> tuple[list[Track], int | None]:
+        """Retrieve only one genuine Apple track-history page and its continuation."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 30:
+            raise ValueError("Apple recent tracks page size must be between 1 and 30")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("Invalid Apple recent tracks offset")
+        params: dict[str, Any] = {"types": "songs,library-songs", "limit": limit}
+        if offset:
+            params["offset"] = str(offset)
+        response = await self.api.get_data("me/recent/played/tracks", **params)
+        if offset and "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recent tracks page")
+        raw_items = response.get("data", [])
+        if not isinstance(raw_items, list):
+            raise TypeError("Invalid Apple recent tracks response")
         tracks: list[Track] = []
-        for raw in response.get("data", []):
+        for raw in raw_items:
             if not isinstance(raw, dict) or raw.get("type") not in ("songs", "library-songs"):
                 continue
             attrs = raw.get("attributes")
@@ -268,7 +339,13 @@ class AppleMusicRecommendationManager:
                 continue
             if isinstance(parsed, Track):
                 tracks.append(parsed)
-        return tracks[:limit]
+        next_offset = self._recent_tracks_next_offset(response, offset)
+        return tracks, next_offset
+
+    async def get_recently_played_tracks(self, limit: int = 20) -> list[Track]:
+        """Read the first actual Apple track-history page for existing callers."""
+        tracks, _ = await self.get_recently_played_tracks_page(limit=limit)
+        return tracks
 
     async def get_personal_recommendations(self) -> list[RecommendationFolder]:  # noqa: PLR0915
         """

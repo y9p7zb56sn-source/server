@@ -122,6 +122,32 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
             return await browse_playlists(self, path, path_parts)
         if path_parts[0] == "stations":
             return await self.recommendation_manager.browse_stations()
+        if path_parts[0] == "recent-tracks":
+            if len(path_parts) == 1:
+                offset = 0
+            elif (
+                len(path_parts) == 2
+                and path_parts[1].isascii()
+                and path_parts[1].isdecimal()
+                and len(path_parts[1]) <= 12
+            ):
+                offset = int(path_parts[1])
+            else:
+                raise ValueError("Invalid recent tracks browse page")
+            return await self._recent_tracks_page_items(offset)
+        if path_parts[0] == "recently-added":
+            if len(path_parts) == 1:
+                offset = 0
+            elif (
+                len(path_parts) == 2
+                and path_parts[1].isascii()
+                and path_parts[1].isdecimal()
+                and len(path_parts[1]) <= 12
+            ):
+                offset = int(path_parts[1])
+            else:
+                raise ValueError("Invalid recently added browse page")
+            return await self._recently_added_page_items(offset)
         return await super().browse(path)
 
     async def search(
@@ -132,6 +158,44 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
     ) -> SearchResults:
         """Perform search on musicprovider."""
         return await self.media_manager.search(search_query, media_types, limit)
+
+    async def _recent_tracks_page_items(
+        self, offset: int = 0
+    ) -> list[MediaItemType | ItemMapping | BrowseFolder]:
+        """Return one native history page and an optional browseable continuation."""
+        tracks, next_offset = await self.recommendation_manager.get_recently_played_tracks_page(
+            limit=30, offset=offset
+        )
+        items: list[MediaItemType | ItemMapping | BrowseFolder] = list(tracks)
+        if next_offset is not None:
+            items.append(
+                BrowseFolder(
+                    item_id=f"recent-tracks-more-{next_offset}",
+                    provider=self.instance_id,
+                    path=f"{self.instance_id}://recent-tracks/{next_offset}",
+                    name="Load more recent tracks",
+                )
+            )
+        return items
+
+    async def _recently_added_page_items(
+        self, offset: int = 0
+    ) -> list[MediaItemType | ItemMapping | BrowseFolder]:
+        """Return one native library-chronology page and optional continuation."""
+        media, next_offset = await self.recommendation_manager.get_recently_added_library_page(
+            offset=offset
+        )
+        items: list[MediaItemType | ItemMapping | BrowseFolder] = list(media)
+        if next_offset is not None:
+            items.append(
+                BrowseFolder(
+                    item_id=f"recently-added-more-{next_offset}",
+                    provider=self.instance_id,
+                    path=f"{self.instance_id}://recently-added/{next_offset}",
+                    name="Load more recently added",
+                )
+            )
+        return items
 
     async def get_recommendations(self) -> list[RecommendationFolder]:
         """Combine provider recommendations with a separately attributed track-history row."""
@@ -162,9 +226,9 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         :param item_id: The item_id of the row, as returned by get_recommendations.
         """
         if item_id == "apple_recent_tracks_1759":
-            return UniqueList(await self.recommendation_manager.get_recently_played_tracks(20))
+            return UniqueList(await self._recent_tracks_page_items())
         if item_id == "apple_recently_added_1759":
-            return UniqueList(await self.recommendation_manager.get_recently_added_library())
+            return UniqueList(await self._recently_added_page_items())
         return await self._recommendation_items_from_payload(item_id)
 
     async def get_household_readonly_capability_summary(self) -> dict[str, object]:
@@ -180,7 +244,7 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
                 "me/recent/played/tracks",
                 {"types": "songs,library-songs", "limit": 5},
             ),
-            ("recently_added", "me/library/recently-added", {"limit": 5}),
+            ("recently_added", "me/library/recently-added", {}),
         )
         results: dict[str, object] = {}
         for label, endpoint, params in endpoints:

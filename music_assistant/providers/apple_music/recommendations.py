@@ -265,10 +265,16 @@ class AppleMusicRecommendationManager:
         if set(params) - {"offset", "limit", "types"}:
             raise ValueError("Unexpected Apple recent tracks pagination parameters")
         offsets = params.get("offset")
-        if offsets is None or len(offsets) != 1 or re.fullmatch(r"[0-9]+", offsets[0]) is None:
+        if (
+            offsets is None
+            or len(offsets) != 1
+            or re.fullmatch(r"[0-9]+", offsets[0]) is None
+        ):
             raise ValueError("Invalid Apple recent tracks offset")
-        if "limit" in params and (len(params["limit"]) != 1 or
-                                  re.fullmatch(r"[0-9]+", params["limit"][0]) is None):
+        if "limit" in params and (
+            len(params["limit"]) != 1
+            or re.fullmatch(r"[0-9]+", params["limit"][0]) is None
+        ):
             raise ValueError("Invalid Apple recent tracks limit")
         if "types" in params and params["types"] != ["songs,library-songs"]:
             raise ValueError("Unexpected Apple recent tracks types")

@@ -251,7 +251,7 @@ class AppleMusicRecommendationManager:
                 continue
             try:
                 media = parser(self.provider, item)
-            except KeyError, TypeError, ValueError:
+            except (KeyError, TypeError, ValueError):
                 continue
             if isinstance(media, (Album, Artist, Playlist, Track)) and media.name:
                 items.append(media)
@@ -348,7 +348,7 @@ class AppleMusicRecommendationManager:
                 continue
             try:
                 parsed = parse_track(self.provider, raw)
-            except KeyError, TypeError, ValueError:
+            except (KeyError, TypeError, ValueError):
                 continue
             if isinstance(parsed, Track):
                 tracks.append(parsed)

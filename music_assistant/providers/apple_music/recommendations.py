@@ -170,7 +170,9 @@ class AppleMusicRecommendationManager:
             )
             return None
 
-    async def get_recently_added_library(self) -> list[Album | Artist | Playlist | Track]:
+    async def get_recently_added_library(
+        self,
+    ) -> list[Album | Artist | Playlist | Track]:
         """Read the first Apple recently-added library page for existing callers."""
         items, _ = await self.get_recently_added_library_page()
         return items
@@ -207,7 +209,10 @@ class AppleMusicRecommendationManager:
                     "me/library/albums", ids=",".join(dict.fromkeys(placeholders))
                 )
                 for detail in detail_response.get("data", []):
-                    if not isinstance(detail, dict) or detail.get("type") != "library-albums":
+                    if (
+                        not isinstance(detail, dict)
+                        or detail.get("type") != "library-albums"
+                    ):
                         continue
                     if detail.get("id") not in placeholders:
                         continue
@@ -258,7 +263,9 @@ class AppleMusicRecommendationManager:
         return items, self._recently_added_next_offset(response, offset)
 
     @staticmethod
-    def _recently_added_next_offset(response: dict[str, Any], offset: int) -> int | None:
+    def _recently_added_next_offset(
+        response: dict[str, Any], offset: int
+    ) -> int | None:
         """Read only Apple's same-endpoint pagination offset, never a supplied URL."""
         next_path = response.get("next")
         if next_path is None:
@@ -326,7 +333,11 @@ class AppleMusicRecommendationManager:
         self, limit: int = 30, offset: int = 0
     ) -> tuple[list[Track], int | None]:
         """Retrieve only one genuine Apple track-history page and its continuation."""
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 30:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 30
+        ):
             raise ValueError("Apple recent tracks page size must be between 1 and 30")
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError("Invalid Apple recent tracks offset")
@@ -341,10 +352,17 @@ class AppleMusicRecommendationManager:
             raise ValueError("Invalid Apple recent tracks response")
         tracks: list[Track] = []
         for raw in raw_items:
-            if not isinstance(raw, dict) or raw.get("type") not in ("songs", "library-songs"):
+            if (
+                not isinstance(raw, dict)
+                or raw.get("type") not in ("songs", "library-songs")
+            ):
                 continue
             attrs = raw.get("attributes")
-            if not raw.get("id") or not isinstance(attrs, dict) or not attrs.get("name"):
+            if (
+                not raw.get("id")
+                or not isinstance(attrs, dict)
+                or not attrs.get("name")
+            ):
                 continue
             try:
                 parsed = parse_track(self.provider, raw)

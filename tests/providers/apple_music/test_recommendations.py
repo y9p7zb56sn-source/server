@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from music_assistant_models.errors import ResourceTemporarilyUnavailable
 from music_assistant_models.media_items import (
     Album,
     Artist,
@@ -950,3 +951,36 @@ async def test_1759_recently_added_rejects_invalid_browse_paths(
     with pytest.raises(ValueError):
         await provider.browse(f"{INSTANCE_ID}://{bad_path}")
     api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "browse_path", "endpoint", "kwargs"),
+    [
+        (
+            "history",
+            "recent-tracks/30",
+            "me/recent/played/tracks",
+            {"types": "songs,library-songs", "limit": 30, "offset": "30"},
+        ),
+        (
+            "added",
+            "recently-added/10",
+            "me/library/recently-added",
+            {"offset": "10"},
+        ),
+    ],
+)
+async def test_1759_incomplete_later_page_is_not_silent_end_of_history(
+    provider: AppleMusicProvider,
+    kind: str,
+    browse_path: str,
+    endpoint: str,
+    kwargs: dict[str, Any],
+) -> None:
+    """A promised next page with missing data is a temporary error, not exhaustion."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {}
+    with pytest.raises(ResourceTemporarilyUnavailable):
+        await provider.browse(f"{INSTANCE_ID}://{browse_path}")
+    api.assert_awaited_once_with(endpoint, **kwargs)

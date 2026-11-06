@@ -7,7 +7,14 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from music_assistant_models.media_items import Album, Artist, BrowseFolder, Playlist, Track, UniqueList
+from music_assistant_models.media_items import (
+    Album,
+    Artist,
+    BrowseFolder,
+    Playlist,
+    Track,
+    UniqueList,
+)
 
 from music_assistant.providers.apple_music.provider import AppleMusicProvider
 

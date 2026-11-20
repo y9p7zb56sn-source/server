@@ -185,8 +185,8 @@ class AppleMusicRecommendationManager:
             raise ValueError("Invalid Apple recently added offset")
         params = {"offset": str(offset)} if offset else {}
         response = await self.api.get_data("me/library/recently-added", **params)
-        if offset and "data" not in response:
-            raise ResourceTemporarilyUnavailable("Incomplete Apple recently added page")
+        if "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recently added response")
         raw_items = response.get("data", [])
         if not isinstance(raw_items, list):
             raise TypeError("Invalid Apple recently added response")
@@ -321,8 +321,8 @@ class AppleMusicRecommendationManager:
         if offset:
             params["offset"] = str(offset)
         response = await self.api.get_data("me/recent/played/tracks", **params)
-        if offset and "data" not in response:
-            raise ResourceTemporarilyUnavailable("Incomplete Apple recent tracks page")
+        if "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recent tracks response")
         raw_items = response.get("data", [])
         if not isinstance(raw_items, list):
             raise TypeError("Invalid Apple recent tracks response")

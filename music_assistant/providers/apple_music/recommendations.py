@@ -45,15 +45,6 @@ if TYPE_CHECKING:
     from .provider import AppleMusicProvider
 
 
-def _slugify_title(title: str) -> str:
-    """Return a stable, alphanumeric slug for a recommendation folder title."""
-    slug = "".join(c for c in title.lower().replace(" ", "_") if c.isalnum() or c == "_")
-    if not slug:
-        # Fall back to a hash for titles that yield no alphanumeric characters.
-        slug = hashlib.md5(title.encode(), usedforsecurity=False).hexdigest()[:12]
-    return slug
-
-
 class AppleMusicRecommendationManager:
     """Handles recommendations, stations, and similar-track lookups."""
 
@@ -545,16 +536,8 @@ class AppleMusicRecommendationManager:
         folders: dict[str, RecommendationFolder] = {}
         seen: set[tuple[str, str, str]] = set()
         self._offered_recommendation_pages.clear()
-        # Apple recommendations are identified by ID, not their display title.
-        # Preserve the original title-based row ID where it remains unambiguous
-        # so existing Home consumers do not lose their saved navigation paths.
-        row_slug_counts: dict[str, int] = {}
-        for section in response["data"]:
-            rec_id = section.get("id")
-            title = section.get("attributes", {}).get("title", {}).get("stringForDisplay")
-            if rec_id and title:
-                slug = _slugify_title(title)
-                row_slug_counts[slug] = row_slug_counts.get(slug, 0) + 1
+        # A public shelf identity must not depend on its title or on other
+        # Apple recommendations appearing in the same Home response.
         self._station_id_to_name.clear()
         self._station_name_to_id.clear()
 
@@ -565,12 +548,7 @@ class AppleMusicRecommendationManager:
             )
             if not rec_id or not title:
                 continue
-            slug = _slugify_title(title)
-            row_id = (
-                f"{slug}_{hashlib.sha256(str(rec_id).encode()).hexdigest()[:12]}"
-                if row_slug_counts[slug] > 1
-                else slug
-            )
+            row_id = f"apple_home_{hashlib.sha256(str(rec_id).encode()).hexdigest()[:16]}"
             contents = recommendation.get("relationships", {}).get("contents", {})
             for item in contents.get("data", []):
                 if not isinstance(item, dict):

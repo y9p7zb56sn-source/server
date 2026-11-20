@@ -128,9 +128,7 @@ async def test_1759_home_rows_preserve_distinct_apple_ids_with_same_title(
     provider: AppleMusicProvider,
 ) -> None:
     """Two Apple-authored shelves with equal names must not be merged."""
-    response = _recommendations_response(
-        {"Made for You": [_station("ra.first", "First Station")]}
-    )
+    response = _recommendations_response({"Made for You": [_station("ra.first", "First Station")]})
     response["data"].append(
         {
             "id": "rec-second",
@@ -159,9 +157,7 @@ async def test_1759_home_row_identity_survives_collisions_and_title_changes(
     provider: AppleMusicProvider,
 ) -> None:
     """An unchanged Apple recommendation keeps its ID across Home refreshes."""
-    stable = _recommendations_response(
-        {"Made for You": [_station("ra.stable", "Stable Station")]}
-    )
+    stable = _recommendations_response({"Made for You": [_station("ra.stable", "Stable Station")]})
     collision = _recommendations_response(
         {"Made for You": [_station("ra.stable", "Stable Station")]}
     )
@@ -169,9 +165,7 @@ async def test_1759_home_row_identity_survives_collisions_and_title_changes(
         {
             "id": "rec-second",
             "attributes": {"title": {"stringForDisplay": "Made for You"}},
-            "relationships": {
-                "contents": {"data": [_station("ra.other", "Other Station")]}
-            },
+            "relationships": {"contents": {"data": [_station("ra.other", "Other Station")]}},
         }
     )
     renamed = _recommendations_response(
@@ -251,9 +245,7 @@ async def test_1759_home_relationship_continuation_is_lazy_and_apple_ordered(
     provider: AppleMusicProvider,
 ) -> None:
     """One Apple-issued shelf cursor fetches one page only when opened."""
-    first = _recommendations_response(
-        {"Made for You": [_station("ra.first", "First Station")]}
-    )
+    first = _recommendations_response({"Made for You": [_station("ra.first", "First Station")]})
     first["data"][0]["relationships"]["contents"]["next"] = (
         "/v1/me/recommendations/rec0/contents?offset=2"
     )
@@ -295,9 +287,7 @@ async def test_1759_home_relationship_valid_cursor_survives_cached_first_page(
     provider: AppleMusicProvider,
 ) -> None:
     """A persisted original page can authorise its exact folder after cache warmup."""
-    first = _recommendations_response(
-        {"Made for You": [_station("ra.first", "First Station")]}
-    )
+    first = _recommendations_response({"Made for You": [_station("ra.first", "First Station")]})
     first["data"][0]["relationships"]["contents"]["next"] = (
         "/v1/me/recommendations/rec0/contents?offset=8&limit=4"
     )
@@ -347,9 +337,7 @@ async def test_1759_home_relationship_rejects_untrusted_next(
     invalid_next: str,
 ) -> None:
     """Only a same-recommendation Apple relative next may create browse access."""
-    response = _recommendations_response(
-        {"Made for You": [_station("ra.first", "First Station")]}
-    )
+    response = _recommendations_response({"Made for You": [_station("ra.first", "First Station")]})
     response["data"][0]["relationships"]["contents"]["next"] = invalid_next
     api = cast("AsyncMock", provider.api_client.get_data)
     api.return_value = response
@@ -363,9 +351,7 @@ async def test_1759_home_relationship_rejects_unoffered_and_incomplete_pages(
     provider: AppleMusicProvider,
 ) -> None:
     """Guessed offsets cannot fetch Apple content; an incomplete offered page is an error."""
-    first = _recommendations_response(
-        {"Made for You": [_station("ra.first", "First Station")]}
-    )
+    first = _recommendations_response({"Made for You": [_station("ra.first", "First Station")]})
     first["data"][0]["relationships"]["contents"]["next"] = (
         "/v1/me/recommendations/rec0/contents?offset=2"
     )
@@ -1099,6 +1085,7 @@ async def test_1759_recent_tracks_next_can_extend_past_first_two_pages(
         "offset": "60",
     }
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_path",
@@ -1232,6 +1219,7 @@ async def test_1759_recently_added_can_extend_past_two_pages(
     assert [item.item_id for item in result] == ["l.older", "recently-added-more-30"]
     assert api.await_count == 3
     assert api.await_args_list[-1].kwargs == {"offset": "20"}
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

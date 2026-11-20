@@ -78,6 +78,13 @@ class TracksController(MediaControllerBase[Track]):
         super().__init__(mass)
         # register (extra) api handlers
         api_base = self.api_base
+        # Opt-in, read-only globally filtered and paginated Songs listing.
+        self.mass.register_api_command(
+            "music/tracks/library_items_unified",
+            self.library_items_unified,
+            required_scope=Scope.LIBRARY_READ,
+            allow_impersonation=True,
+        )
         self.mass.register_api_command(
             f"music/{api_base}/track_versions", self.versions, required_scope=Scope.LIBRARY_READ
         )
@@ -365,6 +372,163 @@ class TracksController(MediaControllerBase[Track]):
                 if _track.uri not in existing_uris:
                     result.append(_track)
         return result
+
+    async def library_items_unified(  # noqa: PLR0913
+        self,
+        favorite: bool | None = None,
+        search: str | None = None,
+        limit: int = 25,
+        offset: int = 0,
+        order_by: str = "sort_name",
+        provider: str | list[str] | None = None,
+        genre: int | list[int] | None = None,
+        played_only: bool = False,
+        explicit: bool | None = None,
+        letter: str | None = None,
+        *,
+        summary: bool = True,
+        reachable_via: list[str] | None = None,
+    ) -> list[Track]:
+        """
+        Return one globally filtered, deterministically sorted page of saved tracks.
+
+        This opt-in read-only API preserves legacy library_items behaviour. A title
+        match or any associated artist match qualifies the track exactly once;
+        all native user/provider/library filters apply before SQL LIMIT/OFFSET.
+        """
+        if type(limit) is not int or not 1 <= limit <= 250:
+            raise InvalidDataError("limit must be an integer between 1 and 250")
+        if type(offset) is not int or not 0 <= offset <= 2**63 - 1:
+            raise InvalidDataError("offset must be a nonnegative SQLite integer")
+        if type(played_only) is not bool or type(summary) is not bool:
+            raise InvalidDataError("played_only and summary must be booleans")
+        if favorite is not None and type(favorite) is not bool:
+            raise InvalidDataError("favorite must be a boolean or null")
+        if explicit is not None and type(explicit) is not bool:
+            raise InvalidDataError("explicit must be a boolean or null")
+        if provider is not None:
+            providers = [provider] if isinstance(provider, str) else provider
+            if (
+                not isinstance(providers, list)
+                or not providers
+                or len(providers) > 64
+                or any(type(p) is not str or not p.strip() for p in providers)
+            ):
+                raise InvalidDataError("provider must contain valid instance IDs")
+        if reachable_via is not None and (
+            not isinstance(reachable_via, list)
+            or len(reachable_via) > 64
+            or any(type(p) is not str or not p.strip() for p in reachable_via)
+        ):
+            raise InvalidDataError("reachable_via must be a list of instance IDs")
+        if genre is not None:
+            genres = genre if isinstance(genre, list) else [genre]
+            if (
+                not genres
+                or len(genres) > 100
+                or any(type(g) is not int or g <= 0 for g in genres)
+            ):
+                raise InvalidDataError("genre must contain positive integer IDs")
+
+        sort_columns = {
+            "sort_name": "tracks.search_sort_name",
+            "name": "tracks.search_name",
+            "timestamp_added": "tracks.timestamp_added",
+            "last_played": "tracks.last_played",
+            "play_count": "tracks.play_count",
+            "favorite": "tracks.favorite",
+            "duration": "tracks.duration",
+            "explicit": "json_extract(tracks.metadata, '$.explicit')",
+            "track_artist_name": (
+                "COALESCE((SELECT MIN(artists.search_name) FROM track_artists AS ta "
+                "JOIN artists ON artists.item_id = ta.artist_id "
+                "WHERE ta.track_id = tracks.item_id), '')"
+            ),
+        }
+        if not isinstance(order_by, str):
+            raise InvalidDataError("order_by must be an allowed column")
+        descending = order_by.endswith("_desc")
+        sort_name = order_by.removesuffix("_desc") if descending else order_by
+        if sort_name not in sort_columns:
+            raise InvalidDataError("unsupported unified library sort column")
+        direction = "DESC" if descending else "ASC"
+
+        query_parts: list[str] = []
+        query_params: dict[str, Any] = {}
+        if search is not None:
+            if not isinstance(search, str) or len(search) > 256:
+                raise InvalidDataError("search must be a string of at most 256 characters")
+            term = create_safe_string(search, True, True)
+            if not term:
+                raise InvalidDataError("search must contain a searchable term")
+            title_match = search_name_match_clause(
+                "tracks", term, "unified_title", query_params
+            )
+            artist_match = search_name_match_clause(
+                "artists", term, "unified_artist", query_params
+            )
+            query_parts.append(
+                f"({title_match} OR EXISTS ("
+                f"SELECT 1 FROM {DB_TABLE_TRACK_ARTISTS} AS ta "
+                "JOIN artists ON artists.item_id = ta.artist_id "
+                "WHERE ta.track_id = tracks.item_id "
+                f"AND {artist_match}))"
+            )
+
+        if letter is not None:
+            if not isinstance(letter, str) or (
+                letter != "#" or not (len(letter) == 1)
+            ) and not (len(letter) == 1 and letter.isascii() and letter.isalpha()):
+                raise InvalidDataError("letter must be A-Z or #")
+            if letter == "#":
+                query_parts.append(
+                    "substr(tracks.search_sort_name, 1, 1) NOT BETWEEN 'a' AND 'z'"
+                )
+            else:
+                query_parts.append("substr(tracks.search_sort_name, 1, 1) = :initial")
+                query_params["initial"] = letter.lower()
+
+        if explicit is True:
+            query_parts.append("json_extract(tracks.metadata, '$.explicit') = 1")
+        elif explicit is False:
+            query_parts.append(
+                "(json_extract(tracks.metadata, '$.explicit') IS NULL "
+                "OR json_extract(tracks.metadata, '$.explicit') = 0)"
+            )
+
+        resolved_reachable_via = self._resolve_reachable_via(reachable_via)
+        if resolved_reachable_via is not None and not resolved_reachable_via:
+            return []
+        self._apply_filters(
+            query_parts=query_parts,
+            query_params=query_params,
+            favorite=favorite,
+            search=None,
+            genre_ids=self._preprocess_genre_ids(genre),
+            provider_filter=self._provider_filter_considering_reachability(
+                provider, resolved_reachable_via
+            ),
+            played_only=played_only,
+            in_library_only=True,
+            reachable_via=resolved_reachable_via,
+        )
+        sql_query, defaults = self._build_final_query(
+            query_parts, [], None, summary=summary
+        )
+        for key, value in defaults.items():
+            query_params.setdefault(key, value)
+        # These ORDER BY expressions come exclusively from the fixed allowlist,
+        # never from caller-controlled SQL. Both directions have a unique tie.
+        sql_query += (
+            f" ORDER BY {sort_columns[sort_name]} {direction}, "
+            f"tracks.search_sort_name {direction}, tracks.item_id {direction}"
+        )
+        rows = await self.mass.music.database.get_rows_from_query(
+            sql_query, query_params, limit=limit, offset=offset
+        )
+        if summary:
+            return [cast("Track", self._parse_summary_row(row)) for row in rows]
+        return [self.item_cls.from_dict(self._parse_db_row(row)) for row in rows]
 
     async def versions(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, Mock
 
@@ -23,6 +24,11 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Coroutine
 
 INSTANCE_ID = "apple_music--test1"
+
+
+def _home_id(recommendation_id: str) -> str:
+    """Return the stable public ID of an Apple-authored Home shelf."""
+    return f"apple_home_{hashlib.sha256(recommendation_id.encode()).hexdigest()[:16]}"
 
 
 def _station(station_id: str, name: str, is_live: bool = False) -> dict[str, Any]:
@@ -102,8 +108,8 @@ async def test_get_recommendations_returns_rows_without_items(
     rows = await provider.get_recommendations()
 
     assert [row.item_id for row in rows] == [
-        "made_for_you",
-        "stations_for_you",
+        _home_id("rec0"),
+        _home_id("rec1"),
         "apple_recent_tracks_1759",
         "apple_recently_added_1759",
     ]
@@ -138,7 +144,7 @@ async def test_1759_home_rows_preserve_distinct_apple_ids_with_same_title(
     rows = await provider.get_recommendations()
     assert [row.name for row in rows[:2]] == ["Made for You", "Made for You"]
     assert rows[0].item_id != rows[1].item_id
-    assert all(row.item_id.startswith("made_for_you_") for row in rows[:2])
+    assert [row.item_id for row in rows[:2]] == [_home_id("rec0"), _home_id("rec-second")]
     assert [item.item_id for item in await provider.get_recommendation_items(rows[0].item_id)] == [
         "ra.first"
     ]
@@ -146,6 +152,47 @@ async def test_1759_home_rows_preserve_distinct_apple_ids_with_same_title(
         "ra.second"
     ]
     api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_1759_home_row_identity_survives_collisions_and_title_changes(
+    provider: AppleMusicProvider,
+) -> None:
+    """An unchanged Apple recommendation keeps its ID across Home refreshes."""
+    stable = _recommendations_response(
+        {"Made for You": [_station("ra.stable", "Stable Station")]}
+    )
+    collision = _recommendations_response(
+        {"Made for You": [_station("ra.stable", "Stable Station")]}
+    )
+    collision["data"].append(
+        {
+            "id": "rec-second",
+            "attributes": {"title": {"stringForDisplay": "Made for You"}},
+            "relationships": {
+                "contents": {"data": [_station("ra.other", "Other Station")]}
+            },
+        }
+    )
+    renamed = _recommendations_response(
+        {"New Display Title": [_station("ra.stable", "Stable Station")]}
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [stable, collision, renamed]
+    manager = provider.recommendation_manager
+
+    first = await manager.get_personal_recommendations()
+    second = await manager.get_personal_recommendations()
+    third = await manager.get_personal_recommendations()
+
+    assert [row.item_id for row in first] == [_home_id("rec0")]
+    assert [row.item_id for row in second] == [_home_id("rec0"), _home_id("rec-second")]
+    assert [row.item_id for row in third] == [_home_id("rec0")]
+    assert [item.item_id for item in second[0].items] == ["ra.stable"]
+    assert [item.item_id for item in second[1].items] == ["ra.other"]
+    assert [item.item_id for item in third[0].items] == ["ra.stable"]
+    assert third[0].name == "New Display Title"
+    assert api.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -223,7 +270,7 @@ async def test_1759_home_relationship_continuation_is_lazy_and_apple_ordered(
         {"data": [_station("ra.fourth", "Fourth Station")]},
     ]
 
-    initial = await provider.get_recommendation_items("made_for_you")
+    initial = await provider.get_recommendation_items(_home_id("rec0"))
     assert [item.item_id for item in initial[:1]] == ["ra.first"]
     assert isinstance(initial[-1], BrowseFolder)
     assert initial[-1].path == f"{INSTANCE_ID}://recommendations-page/rec0/2"
@@ -256,7 +303,7 @@ async def test_1759_home_relationship_valid_cursor_survives_cached_first_page(
     )
     api = cast("AsyncMock", provider.api_client.get_data)
     api.side_effect = [first, {"data": [_station("ra.next", "Next Station")]}]
-    original = await provider.get_recommendation_items("made_for_you")
+    original = await provider.get_recommendation_items(_home_id("rec0"))
     provider.recommendation_manager._offered_recommendation_pages.clear()
 
     next_page = await provider.browse(original[-1].path)
@@ -276,8 +323,8 @@ async def test_1759_home_only_next_folder_is_not_silently_hidden(
     api = cast("AsyncMock", provider.api_client.get_data)
     api.return_value = response
     rows = await provider.get_recommendations()
-    assert rows[0].item_id == "made_for_you"
-    items = await provider.get_recommendation_items("made_for_you")
+    assert rows[0].item_id == _home_id("rec0")
+    items = await provider.get_recommendation_items(_home_id("rec0"))
     assert len(items) == 1
     assert isinstance(items[0], BrowseFolder)
     api.assert_awaited_once()
@@ -307,7 +354,7 @@ async def test_1759_home_relationship_rejects_untrusted_next(
     api = cast("AsyncMock", provider.api_client.get_data)
     api.return_value = response
     with pytest.raises(ValueError):
-        await provider.get_recommendation_items("made_for_you")
+        await provider.get_recommendation_items(_home_id("rec0"))
     api.assert_awaited_once()
 
 
@@ -324,7 +371,7 @@ async def test_1759_home_relationship_rejects_unoffered_and_incomplete_pages(
     )
     api = cast("AsyncMock", provider.api_client.get_data)
     api.side_effect = [first, {}]
-    initial = await provider.get_recommendation_items("made_for_you")
+    initial = await provider.get_recommendation_items(_home_id("rec0"))
     api.reset_mock()
     with pytest.raises(ValueError):
         await provider.browse(f"{INSTANCE_ID}://recommendations-page/rec0/99")
@@ -342,8 +389,8 @@ async def test_rows_and_items_share_one_backend_fetch(provider: AppleMusicProvid
     await provider.get_recommendations()
     # let the background cache-store task complete before the next calls
     await asyncio.sleep(0)
-    items_one = await provider.get_recommendation_items("made_for_you")
-    items_two = await provider.get_recommendation_items("stations_for_you")
+    items_one = await provider.get_recommendation_items(_home_id("rec0"))
+    items_two = await provider.get_recommendation_items(_home_id("rec1"))
 
     api_get_data.assert_awaited_once()
     assert [item.item_id for item in items_one] == ["ra.111"]
@@ -359,10 +406,10 @@ async def test_warm_cache_hit_serves_items_without_backend_fetch(
     """A second items call is served from the stored cache entry, not a new backend fetch."""
     api_get_data = cast("AsyncMock", provider.api_client.get_data)
 
-    items_first = await provider.get_recommendation_items("made_for_you")
+    items_first = await provider.get_recommendation_items(_home_id("rec0"))
     # let the background cache-store task complete before the next call
     await asyncio.sleep(0)
-    items_second = await provider.get_recommendation_items("made_for_you")
+    items_second = await provider.get_recommendation_items(_home_id("rec0"))
 
     api_get_data.assert_awaited_once()
     assert [item.item_id for item in items_first] == ["ra.111"]
@@ -414,7 +461,7 @@ async def test_resolve_station_id_stores_fresh_payload_for_rows_and_items(
     api_get_data.side_effect = [_default_response(), rotated]
 
     result = await provider.recommendation_manager.resolve_station_id("ra.111")
-    items = await provider.get_recommendation_items("made_for_you")
+    items = await provider.get_recommendation_items(_home_id("rec0"))
 
     assert result == "ra.999"
     # rows/items serve the refreshed (rotated) payload from the cache, without a new fetch
@@ -503,7 +550,7 @@ async def test_household_1759_mixed_recommendation_media_and_station_browse(
 
     rows = await provider.get_recommendations()
     await asyncio.sleep(0)
-    items = await provider.get_recommendation_items("made_for_you")
+    items = await provider.get_recommendation_items(_home_id("rec0"))
     station_items = await provider.recommendation_manager.browse_stations()
 
     assert [row.name for row in rows] == [
@@ -587,7 +634,7 @@ async def test_household_1759_unsupported_items_do_not_corrupt_radio_maps(
     api = cast("AsyncMock", provider.api_client.get_data)
     api.return_value = response
 
-    items = await provider.get_recommendation_items("stations_for_you")
+    items = await provider.get_recommendation_items(_home_id("rec0"))
     manager = provider.recommendation_manager
     assert [item.item_id for item in items] == ["ra.good"]
     manager._station_id_to_name.clear()
@@ -605,7 +652,7 @@ async def test_1759_native_history_row_is_distinct_and_lazy(provider: AppleMusic
     assert [row.item_id for row in rows][-2] == "apple_recent_tracks_1759"
     api.assert_awaited_once()
     await asyncio.sleep(0)
-    result = await provider.get_recommendation_items("made_for_you")
+    result = await provider.get_recommendation_items(_home_id("rec0"))
     assert [item.item_id for item in result] == ["ra.111"]
     api.assert_awaited_once()
 

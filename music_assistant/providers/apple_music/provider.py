@@ -68,6 +68,8 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         self.media_manager = AppleMusicMediaManager(self)
         self.recommendation_manager = AppleMusicRecommendationManager(self)
         self.streaming_manager = AppleMusicStreamingManager(self)
+        self._offered_recent_tracks_offsets: set[int] = set()
+        self._offered_recently_added_offsets: set[int] = set()
 
     @property
     def max_concurrent_streams(self) -> int:
@@ -125,28 +127,34 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         if path_parts[0] == "recommendations-page":
             return await self.recommendation_manager.browse_recommendation_page(path)
         if path_parts[0] == "recent-tracks":
-            if len(path_parts) == 1:
+            if path == f"{self.instance_id}://recent-tracks":
                 offset = 0
             elif (
                 len(path_parts) == 2
                 and path_parts[1].isascii()
                 and path_parts[1].isdecimal()
                 and len(path_parts[1]) <= 12
+                and path == f"{self.instance_id}://recent-tracks/{path_parts[1]}"
             ):
                 offset = int(path_parts[1])
+                if offset not in self._offered_recent_tracks_offsets:
+                    raise ValueError("Apple recent tracks page was not offered")
             else:
                 raise ValueError("Invalid recent tracks browse page")
             return await self._recent_tracks_page_items(offset)
         if path_parts[0] == "recently-added":
-            if len(path_parts) == 1:
+            if path == f"{self.instance_id}://recently-added":
                 offset = 0
             elif (
                 len(path_parts) == 2
                 and path_parts[1].isascii()
                 and path_parts[1].isdecimal()
                 and len(path_parts[1]) <= 12
+                and path == f"{self.instance_id}://recently-added/{path_parts[1]}"
             ):
                 offset = int(path_parts[1])
+                if offset not in self._offered_recently_added_offsets:
+                    raise ValueError("Apple recently added page was not offered")
             else:
                 raise ValueError("Invalid recently added browse page")
             return await self._recently_added_page_items(offset)
@@ -165,11 +173,14 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         self, offset: int = 0
     ) -> list[MediaItemType | ItemMapping | BrowseFolder]:
         """Return one native history page and an optional browseable continuation."""
+        if offset == 0:
+            self._offered_recent_tracks_offsets.clear()
         tracks, next_offset = await self.recommendation_manager.get_recently_played_tracks_page(
             limit=30, offset=offset
         )
         items: list[MediaItemType | ItemMapping | BrowseFolder] = list(tracks)
         if next_offset is not None:
+            self._offered_recent_tracks_offsets.add(next_offset)
             items.append(
                 BrowseFolder(
                     item_id=f"recent-tracks-more-{next_offset}",
@@ -184,11 +195,14 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         self, offset: int = 0
     ) -> list[MediaItemType | ItemMapping | BrowseFolder]:
         """Return one native library-chronology page and optional continuation."""
+        if offset == 0:
+            self._offered_recently_added_offsets.clear()
         media, next_offset = await self.recommendation_manager.get_recently_added_library_page(
             offset=offset
         )
         items: list[MediaItemType | ItemMapping | BrowseFolder] = list(media)
         if next_offset is not None:
+            self._offered_recently_added_offsets.add(next_offset)
             items.append(
                 BrowseFolder(
                     item_id=f"recently-added-more-{next_offset}",

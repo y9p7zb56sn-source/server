@@ -1384,6 +1384,7 @@ async def test_1759_recent_stale_offers_fail_closed_after_refresh(
         await provider.browse(first[-1].path)
     assert api.await_count == 2
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("recommendation_id", "next_path", "canonical_route", "alias_route"),

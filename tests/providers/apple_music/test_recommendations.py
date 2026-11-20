@@ -200,6 +200,141 @@ async def test_1759_home_explicit_empty_data_preserves_empty_apple_surface(
 
 
 @pytest.mark.asyncio
+async def test_1759_home_relationship_continuation_is_lazy_and_apple_ordered(
+    provider: AppleMusicProvider,
+) -> None:
+    """One Apple-issued shelf cursor fetches one page only when opened."""
+    first = _recommendations_response(
+        {"Made for You": [_station("ra.first", "First Station")]}
+    )
+    first["data"][0]["relationships"]["contents"]["next"] = (
+        "/v1/me/recommendations/rec0/contents?offset=2"
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [
+        first,
+        {
+            "data": [
+                _station("ra.second", "Second Station"),
+                _station("ra.third", "Third Station"),
+            ],
+            "next": "/v1/me/recommendations/rec0/contents?offset=4",
+        },
+        {"data": [_station("ra.fourth", "Fourth Station")]},
+    ]
+
+    initial = await provider.get_recommendation_items("made_for_you")
+    assert [item.item_id for item in initial[:1]] == ["ra.first"]
+    assert isinstance(initial[-1], BrowseFolder)
+    assert initial[-1].path == f"{INSTANCE_ID}://recommendations-page/rec0/2"
+    assert api.await_count == 1
+
+    older = await provider.browse(initial[-1].path)
+    assert [item.item_id for item in older[:2]] == ["ra.second", "ra.third"]
+    assert isinstance(older[-1], BrowseFolder)
+    assert older[-1].path == f"{INSTANCE_ID}://recommendations-page/rec0/4"
+    assert api.await_count == 2
+    assert api.await_args_list[1].args == ("me/recommendations/rec0/contents",)
+    assert api.await_args_list[1].kwargs == {"offset": 2}
+
+    oldest = await provider.browse(older[-1].path)
+    assert [item.item_id for item in oldest] == ["ra.fourth"]
+    assert api.await_count == 3
+    assert api.await_args_list[2].kwargs == {"offset": 4}
+
+
+@pytest.mark.asyncio
+async def test_1759_home_relationship_valid_cursor_survives_cached_first_page(
+    provider: AppleMusicProvider,
+) -> None:
+    """A persisted original page can authorise its exact folder after cache warmup."""
+    first = _recommendations_response(
+        {"Made for You": [_station("ra.first", "First Station")]}
+    )
+    first["data"][0]["relationships"]["contents"]["next"] = (
+        "/v1/me/recommendations/rec0/contents?offset=8&limit=4"
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [first, {"data": [_station("ra.next", "Next Station")]}]
+    original = await provider.get_recommendation_items("made_for_you")
+    provider.recommendation_manager._offered_recommendation_pages.clear()
+
+    next_page = await provider.browse(original[-1].path)
+    assert [item.item_id for item in next_page] == ["ra.next"]
+    api.assert_any_await("me/recommendations/rec0/contents", offset=8, limit=4)
+
+
+@pytest.mark.asyncio
+async def test_1759_home_only_next_folder_is_not_silently_hidden(
+    provider: AppleMusicProvider,
+) -> None:
+    """An initial Apple shelf with filtered entries still exposes a real next."""
+    response = _recommendations_response({"Made for You": []})
+    response["data"][0]["relationships"]["contents"]["next"] = (
+        "/v1/me/recommendations/rec0/contents?offset=12"
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = response
+    rows = await provider.get_recommendations()
+    assert rows[0].item_id == "made_for_you"
+    items = await provider.get_recommendation_items("made_for_you")
+    assert len(items) == 1
+    assert isinstance(items[0], BrowseFolder)
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_next",
+    [
+        "https://foreign.invalid/v1/me/recommendations/rec0/contents?offset=2",
+        "/v1/me/recommendations/other/contents?offset=2",
+        "/v1/me/recommendations/rec0/contents?offset=0",
+        "/v1/me/recommendations/rec0/contents?offset=two",
+        "/v1/me/recommendations/rec0/contents?offset=2&offset=3",
+        "/v1/me/recommendations/rec0/contents?offset=2&extra=1",
+    ],
+)
+async def test_1759_home_relationship_rejects_untrusted_next(
+    provider: AppleMusicProvider,
+    invalid_next: str,
+) -> None:
+    """Only a same-recommendation Apple relative next may create browse access."""
+    response = _recommendations_response(
+        {"Made for You": [_station("ra.first", "First Station")]}
+    )
+    response["data"][0]["relationships"]["contents"]["next"] = invalid_next
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = response
+    with pytest.raises(ValueError):
+        await provider.get_recommendation_items("made_for_you")
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_1759_home_relationship_rejects_unoffered_and_incomplete_pages(
+    provider: AppleMusicProvider,
+) -> None:
+    """Guessed offsets cannot fetch Apple content; an incomplete offered page is an error."""
+    first = _recommendations_response(
+        {"Made for You": [_station("ra.first", "First Station")]}
+    )
+    first["data"][0]["relationships"]["contents"]["next"] = (
+        "/v1/me/recommendations/rec0/contents?offset=2"
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [first, {}]
+    initial = await provider.get_recommendation_items("made_for_you")
+    api.reset_mock()
+    with pytest.raises(ValueError):
+        await provider.browse(f"{INSTANCE_ID}://recommendations-page/rec0/99")
+    api.assert_not_awaited()
+    with pytest.raises(ResourceTemporarilyUnavailable):
+        await provider.browse(initial[-1].path)
+    api.assert_awaited_once_with("me/recommendations/rec0/contents", offset=2)
+
+
+@pytest.mark.asyncio
 async def test_rows_and_items_share_one_backend_fetch(provider: AppleMusicProvider) -> None:
     """The rows call and both per-row items calls are served from one me/recommendations fetch."""
     api_get_data = cast("AsyncMock", provider.api_client.get_data)

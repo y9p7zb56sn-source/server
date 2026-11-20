@@ -966,6 +966,32 @@ async def test_1759_recently_added_rejects_invalid_browse_paths(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("recommendation_id", "endpoint", "kwargs"),
+    [
+        (
+            "apple_recent_tracks_1759",
+            "me/recent/played/tracks",
+            {"types": "songs,library-songs", "limit": 30},
+        ),
+        ("apple_recently_added_1759", "me/library/recently-added", {}),
+    ],
+)
+async def test_1759_incomplete_first_page_is_not_reported_as_empty(
+    provider: AppleMusicProvider,
+    recommendation_id: str,
+    endpoint: str,
+    kwargs: dict[str, Any],
+) -> None:
+    """Missing Apple data is an error on page one, not false history exhaustion."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {}
+    with pytest.raises(ResourceTemporarilyUnavailable):
+        await provider.get_recommendation_items(recommendation_id)
+    api.assert_awaited_once_with(endpoint, **kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("browse_path", "endpoint", "kwargs"),
     [
         (

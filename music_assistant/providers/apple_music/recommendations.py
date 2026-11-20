@@ -181,11 +181,7 @@ class AppleMusicRecommendationManager:
         if not query or set(query) - {"offset", "limit"}:
             raise ValueError("Invalid Apple recommendation continuation parameters")
         offsets = query.get("offset")
-        if (
-            offsets is None
-            or len(offsets) != 1
-            or re.fullmatch(r"[0-9]{1,12}", offsets[0]) is None
-        ):
+        if offsets is None or len(offsets) != 1 or re.fullmatch(r"[0-9]{1,12}", offsets[0]) is None:
             raise ValueError("Invalid Apple recommendation offset")
         offset = int(offsets[0])
         if offset <= previous_offset:
@@ -230,9 +226,7 @@ class AppleMusicRecommendationManager:
         """Use the same supported media parsers for first and later shelf pages."""
         item_type = raw.get("type")
         item_id = raw.get("id")
-        if not item_id or item_type not in {
-            "artists", "albums", "songs", "playlists", "stations"
-        }:
+        if not item_id or item_type not in {"artists", "albums", "songs", "playlists", "stations"}:
             return None
         attributes = raw.get("attributes") or {}
         if not isinstance(attributes, dict):
@@ -285,15 +279,10 @@ class AppleMusicRecommendationManager:
             raise ValueError("Invalid Apple Music recommendation page")
         kwargs: dict[str, int] = {"offset": offset}
         if len(parts) == 4:
-            if (
-                re.fullmatch(r"[0-9]{1,4}", parts[3]) is None
-                or int(parts[3]) == 0
-            ):
+            if re.fullmatch(r"[0-9]{1,4}", parts[3]) is None or int(parts[3]) == 0:
                 raise ValueError("Invalid Apple Music recommendation page limit")
             kwargs["limit"] = int(parts[3])
-        response = await self.api.get_data(
-            f"me/recommendations/{encoded_id}/contents", **kwargs
-        )
+        response = await self.api.get_data(f"me/recommendations/{encoded_id}/contents", **kwargs)
         if "data" not in response:
             raise ResourceTemporarilyUnavailable("Incomplete Apple recommendation page")
         if not isinstance(response["data"], list):
@@ -570,9 +559,7 @@ class AppleMusicRecommendationManager:
                         name=title,
                     )
                 folders[rec_id].items.append(media)
-            continuation = self._recommendation_continuation_folder(
-                rec_id, contents.get("next"), 0
-            )
+            continuation = self._recommendation_continuation_folder(rec_id, contents.get("next"), 0)
             if continuation is not None:
                 # A shelf consisting only of a genuine continuation remains browseable.
                 if rec_id not in folders:

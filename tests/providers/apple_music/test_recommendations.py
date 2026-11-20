@@ -118,6 +118,88 @@ async def test_get_recommendations_returns_rows_without_items(
 
 
 @pytest.mark.asyncio
+async def test_1759_home_rows_preserve_distinct_apple_ids_with_same_title(
+    provider: AppleMusicProvider,
+) -> None:
+    """Two Apple-authored shelves with equal names must not be merged."""
+    response = _recommendations_response(
+        {"Made for You": [_station("ra.first", "First Station")]}
+    )
+    response["data"].append(
+        {
+            "id": "rec-second",
+            "attributes": {"title": {"stringForDisplay": "Made for You"}},
+            "relationships": {"contents": {"data": [_station("ra.second", "Second Station")]}},
+        }
+    )
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = response
+
+    rows = await provider.get_recommendations()
+    assert [row.name for row in rows[:2]] == ["Made for You", "Made for You"]
+    assert rows[0].item_id != rows[1].item_id
+    assert all(row.item_id.startswith("made_for_you_") for row in rows[:2])
+    assert [item.item_id for item in await provider.get_recommendation_items(rows[0].item_id)] == [
+        "ra.first"
+    ]
+    assert [item.item_id for item in await provider.get_recommendation_items(rows[1].item_id)] == [
+        "ra.second"
+    ]
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_1759_home_row_slug_collision_keeps_apple_sections_separate(
+    provider: AppleMusicProvider,
+) -> None:
+    """Different Apple titles that normalise to one slug remain separate rows."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = _recommendations_response(
+        {
+            "Made for You": [_station("ra.first", "First Station")],
+            "Made_for_You": [_station("ra.second", "Second Station")],
+        }
+    )
+    rows = await provider.get_recommendations()
+    assert [row.name for row in rows[:2]] == ["Made for You", "Made_for_You"]
+    assert len({row.item_id for row in rows[:2]}) == 2
+    assert [item.item_id for item in await provider.get_recommendation_items(rows[0].item_id)] == [
+        "ra.first"
+    ]
+    assert [item.item_id for item in await provider.get_recommendation_items(rows[1].item_id)] == [
+        "ra.second"
+    ]
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_1759_home_missing_data_is_error_not_empty(
+    provider: AppleMusicProvider,
+) -> None:
+    """A malformed Apple Home response must not masquerade as zero shelves."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {}
+    with pytest.raises(ResourceTemporarilyUnavailable):
+        await provider.get_recommendations()
+    api.assert_awaited_once_with("me/recommendations?include[personal-recommendation]=contents")
+
+
+@pytest.mark.asyncio
+async def test_1759_home_explicit_empty_data_preserves_empty_apple_surface(
+    provider: AppleMusicProvider,
+) -> None:
+    """An explicitly empty Apple recommendation response remains an honest empty result."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {"data": []}
+    rows = await provider.get_recommendations()
+    assert [row.item_id for row in rows] == [
+        "apple_recent_tracks_1759",
+        "apple_recently_added_1759",
+    ]
+    api.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_rows_and_items_share_one_backend_fetch(provider: AppleMusicProvider) -> None:
     """The rows call and both per-row items calls are served from one me/recommendations fetch."""
     api_get_data = cast("AsyncMock", provider.api_client.get_data)

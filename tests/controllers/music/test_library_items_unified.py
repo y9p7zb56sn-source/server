@@ -314,4 +314,8 @@ async def test_unified_query_does_not_touch_playback(
         statement = query.call_args.args[0]
         assert "EXISTS" in statement
         assert "ORDER BY" in statement
-        assert "JOIN track_artists ON" not in statement
+        assert "FROM tracks" in statement
+        # Correlated hydration may legitimately JOIN artists; no outer fanout.
+        outer = statement.rsplit("FROM tracks", 1)[1].split(" WHERE ", 1)[0]
+        assert "JOIN track_artists" not in outer
+        assert "GROUP BY tracks.item_id" not in statement

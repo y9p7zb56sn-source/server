@@ -122,6 +122,8 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
             return await browse_playlists(self, path, path_parts)
         if path_parts[0] == "stations":
             return await self.recommendation_manager.browse_stations()
+        if path_parts[0] == "recommendations-page":
+            return await self.recommendation_manager.browse_recommendation_page(path)
         if path_parts[0] == "recent-tracks":
             if len(path_parts) == 1:
                 offset = 0

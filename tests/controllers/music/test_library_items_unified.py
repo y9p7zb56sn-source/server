@@ -127,7 +127,7 @@ async def test_command_registered_with_existing_read_scope(
     assert unified.required_scope == Scope.LIBRARY_READ
     assert unified.allow_impersonation is True
     assert legacy.required_scope == Scope.LIBRARY_READ
-    assert "music/tracks/library_items_unified" != "music/tracks/library_items"
+    assert unified is not legacy
 
 
 async def test_61_unique_matches_paginate_25_25_11(
@@ -297,13 +297,15 @@ async def test_unknown_command_and_database_errors_do_not_fallback(
     """No legacy fallback or fabricated empty response on native database errors."""
     mass, _ = unified_mass
     assert "music/tracks/library_items_unified_unsupported" not in mass.command_handlers
-    with patch.object(
-        mass.music.database,
-        "get_rows_from_query",
-        side_effect=RuntimeError("database unavailable"),
+    with (
+        patch.object(
+            mass.music.database,
+            "get_rows_from_query",
+            side_effect=RuntimeError("database unavailable"),
+        ),
+        pytest.raises(RuntimeError, match="database unavailable"),
     ):
-        with pytest.raises(RuntimeError, match="database unavailable"):
-            await mass.music.tracks.library_items_unified(search="Nebula")
+        await mass.music.tracks.library_items_unified(search="Nebula")
 
 
 async def test_unified_query_does_not_touch_playback(
@@ -321,5 +323,6 @@ async def test_unified_query_does_not_touch_playback(
         )
         assert query.call_count == 1
         statement = query.call_args.args[0]
-        assert "EXISTS" in statement and "ORDER BY" in statement
+        assert "EXISTS" in statement
+        assert "ORDER BY" in statement
         assert "JOIN track_artists ON" not in statement

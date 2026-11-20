@@ -494,7 +494,7 @@ class AppleMusicRecommendationManager:
         tracks, _ = await self.get_recently_played_tracks_page(limit=limit)
         return tracks
 
-    async def get_personal_recommendations(self) -> list[RecommendationFolder]:  # noqa: PLR0915
+    async def get_personal_recommendations(self) -> list[RecommendationFolder]:
         """
         Return supported Apple recommendations, not stations alone.
 

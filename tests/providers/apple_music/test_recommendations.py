@@ -1319,3 +1319,79 @@ async def test_1759_incomplete_later_page_is_not_silent_end_of_history(
     assert api.await_count == 2
     assert api.await_args_list[-1].args == (endpoint,)
     assert api.await_args_list[-1].kwargs == kwargs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "browse_path",
+    [
+        "recent-tracks/30",
+        "recent-tracks/60",
+        "recent-tracks/0",
+        "recently-added/10",
+        "recently-added/20",
+        "recently-added/0",
+        "recent-tracks//30",
+        "recently-added/10/",
+    ],
+)
+async def test_1759_recent_pages_reject_unoffered_or_noncanonical_offsets(
+    provider: AppleMusicProvider,
+    browse_path: str,
+) -> None:
+    """Guessed or malformed browse offsets cannot call the authenticated Apple API."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    with pytest.raises(ValueError):
+        await provider.browse(f"{INSTANCE_ID}://{browse_path}")
+    api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["recent-tracks/30", "recently-added/10"])
+async def test_1759_recent_pages_reject_foreign_instance(
+    provider: AppleMusicProvider,
+    route: str,
+) -> None:
+    """A foreign instance's numeric browse path cannot call this Apple client."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    with pytest.raises(ValueError):
+        await provider.browse(f"other-apple-instance://{route}")
+    api.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("recommendation_id", "next_path", "route", "offer_attribute"),
+    [
+        (
+            "apple_recent_tracks_1759",
+            "/v1/me/recent/played/tracks?offset=30",
+            "recent-tracks/30",
+            "_offered_recent_tracks_offsets",
+        ),
+        (
+            "apple_recently_added_1759",
+            "/v1/me/library/recently-added?offset=10",
+            "recently-added/10",
+            "_offered_recently_added_offsets",
+        ),
+    ],
+)
+async def test_1759_recent_stale_offers_fail_closed_after_refresh(
+    provider: AppleMusicProvider,
+    recommendation_id: str,
+    next_path: str,
+    route: str,
+    offer_attribute: str,
+) -> None:
+    """A new first page invalidates previously offered history page paths."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.side_effect = [{"data": [], "next": next_path}, {"data": []}]
+    first = await provider.get_recommendation_items(recommendation_id)
+    assert first[-1].path == f"{INSTANCE_ID}://{route}"
+    assert getattr(provider, offer_attribute)
+    await provider.get_recommendation_items(recommendation_id)
+    assert not getattr(provider, offer_attribute)
+    with pytest.raises(ValueError):
+        await provider.browse(first[-1].path)
+    assert api.await_count == 2

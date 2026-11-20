@@ -1072,18 +1072,32 @@ async def test_1759_recent_tracks_reject_untrusted_or_stale_next(
 async def test_1759_recent_tracks_next_can_extend_past_first_two_pages(
     provider: AppleMusicProvider,
 ) -> None:
-    """There is no arbitrary total result cap when Apple's next page exists."""
+    """Each deeper page must first be offered by Apple's preceding response."""
     api = cast("AsyncMock", provider.api_client.get_data)
-    api.return_value = {
-        "data": [_recent_track_record("song.older")],
-        "next": "/v1/me/recent/played/tracks?offset=90",
+    api.side_effect = [
+        {
+            "data": [_recent_track_record("song.first")],
+            "next": "/v1/me/recent/played/tracks?offset=30",
+        },
+        {
+            "data": [_recent_track_record("song.middle")],
+            "next": "/v1/me/recent/played/tracks?offset=60",
+        },
+        {
+            "data": [_recent_track_record("song.older")],
+            "next": "/v1/me/recent/played/tracks?offset=90",
+        },
+    ]
+    first = await provider.get_recommendation_items("apple_recent_tracks_1759")
+    middle = await provider.browse(first[-1].path)
+    older = await provider.browse(middle[-1].path)
+    assert [item.item_id for item in older] == ["song.older", "recent-tracks-more-90"]
+    assert api.await_count == 3
+    assert api.await_args_list[-1].kwargs == {
+        "types": "songs,library-songs",
+        "limit": 30,
+        "offset": "60",
     }
-    items = await provider.browse(f"{INSTANCE_ID}://recent-tracks/60")
-    assert [item.item_id for item in items] == ["song.older", "recent-tracks-more-90"]
-    api.assert_awaited_once_with(
-        "me/recent/played/tracks", types="songs,library-songs", limit=30, offset="60"
-    )
-
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -1196,16 +1210,28 @@ async def test_1759_recently_added_rejects_invalid_continuations(
 async def test_1759_recently_added_can_extend_past_two_pages(
     provider: AppleMusicProvider,
 ) -> None:
-    """Do not impose a maximum total library-history depth."""
+    """Unlimited depth remains gated by genuine Apple continuation."""
     api = cast("AsyncMock", provider.api_client.get_data)
-    api.return_value = {
-        "data": [_recently_added_album_record("l.older")],
-        "next": "/v1/me/library/recently-added?offset=30",
-    }
-    result = await provider.browse(f"{INSTANCE_ID}://recently-added/20")
+    api.side_effect = [
+        {
+            "data": [_recently_added_album_record("l.new")],
+            "next": "/v1/me/library/recently-added?offset=10",
+        },
+        {
+            "data": [_recently_added_album_record("l.mid")],
+            "next": "/v1/me/library/recently-added?offset=20",
+        },
+        {
+            "data": [_recently_added_album_record("l.older")],
+            "next": "/v1/me/library/recently-added?offset=30",
+        },
+    ]
+    first = await provider.get_recommendation_items("apple_recently_added_1759")
+    second = await provider.browse(first[-1].path)
+    result = await provider.browse(second[-1].path)
     assert [item.item_id for item in result] == ["l.older", "recently-added-more-30"]
-    api.assert_awaited_once_with("me/library/recently-added", offset="20")
-
+    assert api.await_count == 3
+    assert api.await_args_list[-1].kwargs == {"offset": "20"}
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -1256,29 +1282,40 @@ async def test_1759_incomplete_first_page_is_not_reported_as_empty(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("browse_path", "endpoint", "kwargs"),
+    ("recommendation_id", "browse_path", "endpoint", "kwargs", "next_path"),
     [
         (
+            "apple_recent_tracks_1759",
             "recent-tracks/30",
             "me/recent/played/tracks",
             {"types": "songs,library-songs", "limit": 30, "offset": "30"},
+            "/v1/me/recent/played/tracks?offset=30",
         ),
         (
+            "apple_recently_added_1759",
             "recently-added/10",
             "me/library/recently-added",
             {"offset": "10"},
+            "/v1/me/library/recently-added?offset=10",
         ),
     ],
 )
 async def test_1759_incomplete_later_page_is_not_silent_end_of_history(
     provider: AppleMusicProvider,
+    recommendation_id: str,
     browse_path: str,
     endpoint: str,
     kwargs: dict[str, Any],
+    next_path: str,
 ) -> None:
-    """A promised next page with missing data is a temporary error, not exhaustion."""
+    """A genuinely offered later page with missing data is a provider error."""
     api = cast("AsyncMock", provider.api_client.get_data)
-    api.return_value = {}
+    api.side_effect = [{"data": [], "next": next_path}, {}]
+    first = await provider.get_recommendation_items(recommendation_id)
+    assert isinstance(first[-1], BrowseFolder)
+    assert first[-1].path == f"{INSTANCE_ID}://{browse_path}"
     with pytest.raises(ResourceTemporarilyUnavailable):
-        await provider.browse(f"{INSTANCE_ID}://{browse_path}")
-    api.assert_awaited_once_with(endpoint, **kwargs)
+        await provider.browse(first[-1].path)
+    assert api.await_count == 2
+    assert api.await_args_list[-1].args == (endpoint,)
+    assert api.await_args_list[-1].kwargs == kwargs

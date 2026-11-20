@@ -1383,3 +1383,50 @@ async def test_1759_recent_stale_offers_fail_closed_after_refresh(
     with pytest.raises(ValueError, match=r".+"):
         await provider.browse(first[-1].path)
     assert api.await_count == 2
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("recommendation_id", "next_path", "canonical_route", "alias_route"),
+    [
+        (
+            "apple_recent_tracks_1759",
+            "/v1/me/recent/played/tracks?offset=30",
+            "recent-tracks/30",
+            "recent-tracks/030",
+        ),
+        (
+            "apple_recent_tracks_1759",
+            "/v1/me/recent/played/tracks?offset=30",
+            "recent-tracks/30",
+            "recent-tracks/000000000030",
+        ),
+        (
+            "apple_recently_added_1759",
+            "/v1/me/library/recently-added?offset=10",
+            "recently-added/10",
+            "recently-added/010",
+        ),
+    ],
+)
+async def test_1759_offered_recent_offset_aliases_never_fetch_apple(
+    provider: AppleMusicProvider,
+    recommendation_id: str,
+    next_path: str,
+    canonical_route: str,
+    alias_route: str,
+) -> None:
+    """Only the canonical page offered by Apple can trigger an authenticated GET."""
+    api = cast("AsyncMock", provider.api_client.get_data)
+    api.return_value = {"data": [], "next": next_path}
+    first = await provider.get_recommendation_items(recommendation_id)
+    assert isinstance(first[-1], BrowseFolder)
+    assert first[-1].path == f"{INSTANCE_ID}://{canonical_route}"
+    api.reset_mock()
+
+    with pytest.raises(ValueError, match=r".+"):
+        await provider.browse(f"{INSTANCE_ID}://{alias_route}")
+    api.assert_not_awaited()
+
+    api.return_value = {"data": []}
+    assert await provider.browse(first[-1].path) == []
+    api.assert_awaited_once()

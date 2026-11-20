@@ -353,7 +353,7 @@ async def test_1759_home_relationship_rejects_untrusted_next(
     response["data"][0]["relationships"]["contents"]["next"] = invalid_next
     api = cast("AsyncMock", provider.api_client.get_data)
     api.return_value = response
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.get_recommendation_items(_home_id("rec0"))
     api.assert_awaited_once()
 
@@ -373,7 +373,7 @@ async def test_1759_home_relationship_rejects_unoffered_and_incomplete_pages(
     api.side_effect = [first, {}]
     initial = await provider.get_recommendation_items(_home_id("rec0"))
     api.reset_mock()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.browse(f"{INSTANCE_ID}://recommendations-page/rec0/99")
     api.assert_not_awaited()
     with pytest.raises(ResourceTemporarilyUnavailable):
@@ -1341,7 +1341,7 @@ async def test_1759_recent_pages_reject_unoffered_or_noncanonical_offsets(
 ) -> None:
     """Guessed or malformed browse offsets cannot call the authenticated Apple API."""
     api = cast("AsyncMock", provider.api_client.get_data)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.browse(f"{INSTANCE_ID}://{browse_path}")
     api.assert_not_awaited()
 
@@ -1354,7 +1354,7 @@ async def test_1759_recent_pages_reject_foreign_instance(
 ) -> None:
     """A foreign instance's numeric browse path cannot call this Apple client."""
     api = cast("AsyncMock", provider.api_client.get_data)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.browse(f"other-apple-instance://{route}")
     api.assert_not_awaited()
 
@@ -1392,6 +1392,6 @@ async def test_1759_recent_stale_offers_fail_closed_after_refresh(
     assert getattr(provider, offer_attribute)
     await provider.get_recommendation_items(recommendation_id)
     assert not getattr(provider, offer_attribute)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r".+"):
         await provider.browse(first[-1].path)
     assert api.await_count == 2

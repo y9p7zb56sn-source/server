@@ -73,9 +73,7 @@ async def unified_mass(
                 item_id="0",
                 provider="library",
                 name=title,
-                provider_mappings={
-                    _mapping("prov_a_inst" if idx % 2 == 0 else "prov_b_inst")
-                },
+                provider_mappings={_mapping("prov_a_inst" if idx % 2 == 0 else "prov_b_inst")},
                 artists=UniqueList(artists),
                 favorite=idx % 2 == 0,
             )
@@ -136,9 +134,7 @@ async def test_61_unique_matches_paginate_25_25_11(
     """All 51 artist-only hits appear after first-page title hits, without fanout."""
     mass, ids = unified_mass
     pages = [
-        await mass.music.tracks.library_items_unified(
-            search="Nebula", limit=25, offset=offset
-        )
+        await mass.music.tracks.library_items_unified(search="Nebula", limit=25, offset=offset)
         for offset in (0, 25, 50)
     ]
     assert [len(p) for p in pages] == [25, 25, 11]
@@ -146,9 +142,7 @@ async def test_61_unique_matches_paginate_25_25_11(
     assert len({t.item_id for t in items}) == 61
     assert {t.item_id for t in items} == set(ids.values())
     assert [t.name for t in items] == sorted(t.name for t in items)
-    assert await mass.music.tracks.library_items_unified(
-        search="Nebula", limit=25, offset=61
-    ) == []
+    assert await mass.music.tracks.library_items_unified(search="Nebula", limit=25, offset=61) == []
 
 
 async def test_short_like_and_longer_fts_have_identical_union(
@@ -168,9 +162,7 @@ async def test_global_letters_before_paging(
     """Letter selection must filter the total matching set, never one fetched page."""
     mass, ids = unified_mass
     o1 = await mass.music.tracks.library_items_unified(letter="O", limit=25)
-    o2 = await mass.music.tracks.library_items_unified(
-        letter="o", limit=25, offset=25
-    )
+    o2 = await mass.music.tracks.library_items_unified(letter="o", limit=25, offset=25)
     numeric = await mass.music.tracks.library_items_unified(letter="#")
     title_only = await mass.music.tracks.library_items_unified(letter="N", limit=25)
     assert len(o1) == len(o2) == 25
@@ -202,19 +194,24 @@ async def test_all_filters_apply_to_title_and_artist_matches(
         limit=25,
     )
     assert [t.item_id for t in selected] == [ids[30]]
-    assert len(
-        await mass.music.tracks.library_items_unified(
-            search="Nebula", played_only=True, limit=100
+    assert (
+        len(
+            await mass.music.tracks.library_items_unified(
+                search="Nebula", played_only=True, limit=100
+            )
         )
-    ) == 13
-    assert len(
+        == 13
+    )
+    assert (
+        len(await mass.music.tracks.library_items_unified(search="Nebula", genre=7, limit=100))
+        == 21
+    )
+    assert (
         await mass.music.tracks.library_items_unified(
-            search="Nebula", genre=7, limit=100
+            search="Nebula", reachable_via=["unavailable"], limit=25
         )
-    ) == 21
-    assert await mass.music.tracks.library_items_unified(
-        search="Nebula", reachable_via=["unavailable"], limit=25
-    ) == []
+        == []
+    )
 
 
 async def test_deterministic_bidirectional_sort_and_artist_ties(
@@ -233,9 +230,7 @@ async def test_deterministic_bidirectional_sort_and_artist_ties(
         assert [i.item_id for i in asc] == [i.item_id for i in reversed(desc)]
         assert len({i.item_id for i in asc}) == 61
     # Two-artists entries do not repeat after correlated artist sort.
-    artist = await mass.music.tracks.library_items_unified(
-        order_by="track_artist_name", limit=100
-    )
+    artist = await mass.music.tracks.library_items_unified(order_by="track_artist_name", limit=100)
     assert set(ids.values()) == {i.item_id for i in artist}
 
 
@@ -244,14 +239,10 @@ async def test_full_hydration_and_unavailable_or_empty(
 ) -> None:
     """Full items remain native Track objects; unavailable/empty cases stay honest."""
     mass, _ = unified_mass
-    tracks = await mass.music.tracks.library_items_unified(
-        search="Nebula", summary=False, limit=2
-    )
+    tracks = await mass.music.tracks.library_items_unified(search="Nebula", summary=False, limit=2)
     assert len(tracks) == 2
     assert all(isinstance(t, Track) for t in tracks)
-    assert await mass.music.tracks.library_items_unified(
-        search="zzznotpresentzzz", limit=25
-    ) == []
+    assert await mass.music.tracks.library_items_unified(search="zzznotpresentzzz", limit=25) == []
 
 
 @pytest.mark.parametrize(
@@ -318,9 +309,7 @@ async def test_unified_query_does_not_touch_playback(
         "get_rows_from_query",
         wraps=mass.music.database.get_rows_from_query,
     ) as query:
-        await mass.music.tracks.library_items_unified(
-            search="Nebula", limit=25, offset=25
-        )
+        await mass.music.tracks.library_items_unified(search="Nebula", limit=25, offset=25)
         assert query.call_count == 1
         statement = query.call_args.args[0]
         assert "EXISTS" in statement

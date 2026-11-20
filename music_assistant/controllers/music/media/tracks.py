@@ -373,7 +373,7 @@ class TracksController(MediaControllerBase[Track]):
                     result.append(_track)
         return result
 
-    async def library_items_unified(  # noqa: PLR0913
+    async def library_items_unified(  # noqa: PLR0913, PLR0915
         self,
         favorite: bool | None = None,
         search: str | None = None,
@@ -477,8 +477,9 @@ class TracksController(MediaControllerBase[Track]):
 
         if letter is not None:
             if not isinstance(letter, str) or (
-                letter != "#" or not (len(letter) == 1)
-            ) and not (len(letter) == 1 and letter.isascii() and letter.isalpha()):
+                letter != "#"
+                and not (len(letter) == 1 and letter.isascii() and letter.isalpha())
+            ):
                 raise InvalidDataError("letter must be A-Z or #")
             if letter == "#":
                 query_parts.append(

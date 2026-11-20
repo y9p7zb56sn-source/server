@@ -544,6 +544,7 @@ class AppleMusicRecommendationManager:
 
         folders: dict[str, RecommendationFolder] = {}
         seen: set[tuple[str, str, str]] = set()
+        self._offered_recommendation_pages.clear()
         # Apple recommendations are identified by ID, not their display title.
         # Preserve the original title-based row ID where it remains unambiguous
         # so existing Home consumers do not lose their saved navigation paths.
@@ -572,43 +573,17 @@ class AppleMusicRecommendationManager:
             )
             contents = recommendation.get("relationships", {}).get("contents", {})
             for item in contents.get("data", []):
-                item_type = item.get("type")
-                item_id = item.get("id")
-                if not item_id or item_type not in {
-                    "artists",
-                    "albums",
-                    "songs",
-                    "playlists",
-                    "stations",
-                }:
+                if not isinstance(item, dict):
                     continue
-                key = (str(rec_id), item_type, str(item_id))
+                item_id, item_type = item.get("id"), item.get("type")
+                if not item_id or not item_type:
+                    continue
+                key = (str(rec_id), str(item_type), str(item_id))
                 if key in seen:
                     continue
-
-                attributes = item.get("attributes") or {}
-                media: Album | Artist | ItemMapping | Playlist | Track | None
-                if item_type == "stations":
-                    if attributes.get("isLive", False):
-                        # Existing Widevine-protected live station exclusion.
-                        continue
-                    if attributes.get("name"):
-                        media = parse_station_as_playlist(self.provider, item)
-                    else:
-                        media = await self.provider.get_playlist(item_id)
-                    if not media.name or media.name == item_id:
-                        continue
-                    self._station_id_to_name[item_id] = media.name
-                    self._station_name_to_id[media.name] = item_id
-                else:
-                    # Apple can return ID-only relationship references. Do not
-                    # invent titles or make network requests for every card.
-                    if not isinstance(attributes, dict) or not attributes.get("name"):
-                        continue
-                    media = self._parse_recommended_media(item_type, item)
-                    if media is None or not media.name:
-                        continue
-
+                media = await self._parse_recommendation_content(item)
+                if media is None:
+                    continue
                 seen.add(key)
                 if rec_id not in folders:
                     folders[rec_id] = RecommendationFolder(
@@ -617,6 +592,18 @@ class AppleMusicRecommendationManager:
                         name=title,
                     )
                 folders[rec_id].items.append(media)
+            continuation = self._recommendation_continuation_folder(
+                rec_id, contents.get("next"), 0
+            )
+            if continuation is not None:
+                # A shelf consisting only of a genuine continuation remains browseable.
+                if rec_id not in folders:
+                    folders[rec_id] = RecommendationFolder(
+                        item_id=row_id,
+                        provider=self.provider.instance_id,
+                        name=title,
+                    )
+                folders[rec_id].items.append(continuation)
 
         return list(folders.values())
 

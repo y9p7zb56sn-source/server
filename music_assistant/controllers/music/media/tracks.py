@@ -423,11 +423,7 @@ class TracksController(MediaControllerBase[Track]):
             raise InvalidDataError("reachable_via must be a list of instance IDs")
         if genre is not None:
             genres = genre if isinstance(genre, list) else [genre]
-            if (
-                not genres
-                or len(genres) > 100
-                or any(type(g) is not int or g <= 0 for g in genres)
-            ):
+            if not genres or len(genres) > 100 or any(type(g) is not int or g <= 0 for g in genres):
                 raise InvalidDataError("genre must contain positive integer IDs")
 
         sort_columns = {
@@ -461,12 +457,8 @@ class TracksController(MediaControllerBase[Track]):
             term = create_safe_string(search, True, True)
             if not term:
                 raise InvalidDataError("search must contain a searchable term")
-            title_match = search_name_match_clause(
-                "tracks", term, "unified_title", query_params
-            )
-            artist_match = search_name_match_clause(
-                "artists", term, "unified_artist", query_params
-            )
+            title_match = search_name_match_clause("tracks", term, "unified_title", query_params)
+            artist_match = search_name_match_clause("artists", term, "unified_artist", query_params)
             query_parts.append(
                 f"({title_match} OR EXISTS ("
                 f"SELECT 1 FROM {DB_TABLE_TRACK_ARTISTS} AS ta "
@@ -477,14 +469,11 @@ class TracksController(MediaControllerBase[Track]):
 
         if letter is not None:
             if not isinstance(letter, str) or (
-                letter != "#"
-                and not (len(letter) == 1 and letter.isascii() and letter.isalpha())
+                letter != "#" and not (len(letter) == 1 and letter.isascii() and letter.isalpha())
             ):
                 raise InvalidDataError("letter must be A-Z or #")
             if letter == "#":
-                query_parts.append(
-                    "substr(tracks.search_sort_name, 1, 1) NOT BETWEEN 'a' AND 'z'"
-                )
+                query_parts.append("substr(tracks.search_sort_name, 1, 1) NOT BETWEEN 'a' AND 'z'")
             else:
                 query_parts.append("substr(tracks.search_sort_name, 1, 1) = :initial")
                 query_params["initial"] = letter.lower()
@@ -513,9 +502,7 @@ class TracksController(MediaControllerBase[Track]):
             in_library_only=True,
             reachable_via=resolved_reachable_via,
         )
-        sql_query, defaults = self._build_final_query(
-            query_parts, [], None, summary=summary
-        )
+        sql_query, defaults = self._build_final_query(query_parts, [], None, summary=summary)
         for key, value in defaults.items():
             query_params.setdefault(key, value)
         # These ORDER BY expressions come exclusively from the fixed allowlist,

@@ -134,6 +134,7 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
                 and path_parts[1].isascii()
                 and path_parts[1].isdecimal()
                 and len(path_parts[1]) <= 12
+                and path_parts[1] == str(int(path_parts[1]))
                 and path == f"{self.instance_id}://recent-tracks/{path_parts[1]}"
             ):
                 offset = int(path_parts[1])
@@ -150,6 +151,7 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
                 and path_parts[1].isascii()
                 and path_parts[1].isdecimal()
                 and len(path_parts[1]) <= 12
+                and path_parts[1] == str(int(path_parts[1]))
                 and path == f"{self.instance_id}://recently-added/{path_parts[1]}"
             ):
                 offset = int(path_parts[1])

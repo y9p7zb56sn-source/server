@@ -370,8 +370,12 @@ class AppleMusicRecommendationManager:
             event = "CANCELLED" if isinstance(exc, asyncio.CancelledError) else "FETCH_FAILED"
             self.logger.warning("MA1759_REFRESH=%s", event)
             raise
+        if "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recommendations response")
+        if not isinstance(response["data"], list):
+            raise TypeError("Invalid Apple recommendations response")
         counts = dict.fromkeys(("albums", "artists", "songs", "playlists", "stations"), 0)
-        for section in response.get("data", []):
+        for section in response["data"]:
             for item in section.get("relationships", {}).get("contents", {}).get("data", []):
                 kind = item.get("type")
                 if kind in counts:
@@ -384,16 +388,32 @@ class AppleMusicRecommendationManager:
 
         folders: dict[str, RecommendationFolder] = {}
         seen: set[tuple[str, str, str]] = set()
+        # Apple recommendations are identified by ID, not their display title.
+        # Preserve the original title-based row ID where it remains unambiguous
+        # so existing Home consumers do not lose their saved navigation paths.
+        row_slug_counts: dict[str, int] = {}
+        for section in response["data"]:
+            rec_id = section.get("id")
+            title = section.get("attributes", {}).get("title", {}).get("stringForDisplay")
+            if rec_id and title:
+                slug = _slugify_title(title)
+                row_slug_counts[slug] = row_slug_counts.get(slug, 0) + 1
         self._station_id_to_name.clear()
         self._station_name_to_id.clear()
 
-        for recommendation in response.get("data", []):
+        for recommendation in response["data"]:
             rec_id = recommendation.get("id", "")
             title = (
                 recommendation.get("attributes", {}).get("title", {}).get("stringForDisplay", "")
             )
             if not rec_id or not title:
                 continue
+            slug = _slugify_title(title)
+            row_id = (
+                f"{slug}_{hashlib.sha256(str(rec_id).encode()).hexdigest()[:12]}"
+                if row_slug_counts[slug] > 1
+                else slug
+            )
             contents = recommendation.get("relationships", {}).get("contents", {})
             for item in contents.get("data", []):
                 item_type = item.get("type")
@@ -406,7 +426,7 @@ class AppleMusicRecommendationManager:
                     "stations",
                 }:
                     continue
-                key = (title, item_type, str(item_id))
+                key = (str(rec_id), item_type, str(item_id))
                 if key in seen:
                     continue
 
@@ -434,13 +454,13 @@ class AppleMusicRecommendationManager:
                         continue
 
                 seen.add(key)
-                if title not in folders:
-                    folders[title] = RecommendationFolder(
-                        item_id=_slugify_title(title),
+                if rec_id not in folders:
+                    folders[rec_id] = RecommendationFolder(
+                        item_id=row_id,
                         provider=self.provider.instance_id,
                         name=title,
                     )
-                folders[title].items.append(media)
+                folders[rec_id].items.append(media)
 
         return list(folders.values())
 

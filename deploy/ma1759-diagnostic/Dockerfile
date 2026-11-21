@@ -11,10 +11,9 @@ COPY music_assistant/providers/apple_music/provider.py /app/venv/lib/python3.14/
 COPY music_assistant/providers/apple_music/recommendations.py /app/venv/lib/python3.14/site-packages/music_assistant/providers/apple_music/recommendations.py
 COPY music_assistant/providers/apple_music/readonly_diagnostic_1759.py /app/venv/lib/python3.14/site-packages/music_assistant/providers/apple_music/readonly_diagnostic_1759.py
 
-COPY manifest.json /tmp/ma1759_diag_manifest.json
-COPY verify_image.py /tmp/ma1759_verify_image.py
-RUN /app/venv/bin/python -I -B /tmp/ma1759_verify_image.py && \
-    rm /tmp/ma1759_diag_manifest.json /tmp/ma1759_verify_image.py
+COPY manifest.json /opt/ma1759-diagnostic/manifest.json
+COPY verify_image.py /opt/ma1759-diagnostic/verify_image.py
+RUN /app/venv/bin/python -I -B /opt/ma1759-diagnostic/verify_image.py
 
 LABEL org.opencontainers.image.title="MA1759 candidate-only diagnostic overlay" \
       org.opencontainers.image.revision="4b2332d0a16f4c10aacf406170c2d5a09dc17dac" \

@@ -8,6 +8,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from music_assistant_models.errors import InvalidDataError
+
 from music_assistant.providers.apple_music.readonly_diagnostic_1759 import (
     AppleFirstPageShapeError,
     collect_apple_first_pages,
@@ -175,7 +177,7 @@ class CandidateAppleFirstPageTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((await cmd(fake))["apple_get_count"], 3)
         self.assertTrue(fake._ma1759_first_pages_consumed)
-        with self.assertRaisesRegex(ValueError, "MA1759_DIAGNOSTIC_ALREADY_CONSUMED"):
+        with self.assertRaisesRegex(InvalidDataError, "MA1759_DIAGNOSTIC_ALREADY_CONSUMED"):
             await cmd(fake)
         response.assert_awaited_once()
 
@@ -192,7 +194,7 @@ class CandidateAppleFirstPageTests(unittest.IsolatedAsyncioTestCase):
                 get_provider_instances=lambda domain, rows=candidates: rows,
                 _apply_user_provider_filter=lambda providers: providers,
             )
-            with self.assertRaises(ValueError):
+            with self.assertRaises(InvalidDataError):
                 await MusicController.ma1759_apple_first_page_shapes(fake)
             self.assertFalse(fake._ma1759_first_pages_consumed)
         probe.assert_not_awaited()

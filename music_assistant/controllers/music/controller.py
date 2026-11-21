@@ -780,9 +780,7 @@ class MusicController(MusicDatabaseSetupMixin, CoreController):
         prov_items = await cast("MusicProvider", browse_prov).browse(path=path)
         return [*prepend_items, *prov_items]
 
-    @api_command(
-        "music/ma1759_apple_first_page_shapes", required_scope=Scope.LIBRARY_READ
-    )
+    @api_command("music/ma1759_apple_first_page_shapes", required_scope=Scope.LIBRARY_READ)
     async def ma1759_apple_first_page_shapes(self) -> dict[str, object]:
         """
         One-use candidate diagnostic of genuine Apple first pages, without raw IDs.

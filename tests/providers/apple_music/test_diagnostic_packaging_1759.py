@@ -66,7 +66,7 @@ def test_staging_rejects_changed_provider_without_creating_context(tmp_path: Pat
     assert not context.exists()
 
 
-@pytest.mark.parametrize("name", ("Dockerfile", "verify_image.py"))
+@pytest.mark.parametrize("name", ["Dockerfile", "verify_image.py"])
 def test_staging_rejects_tampered_deploy_file(tmp_path: Path, name: str) -> None:
     """Reject changes to either independently reviewed build input."""
     source = _copy_source_closure(tmp_path / "fork")

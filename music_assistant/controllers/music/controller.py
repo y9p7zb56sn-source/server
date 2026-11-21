@@ -784,7 +784,8 @@ class MusicController(MusicDatabaseSetupMixin, CoreController):
         "music/ma1759_apple_first_page_shapes", required_scope=Scope.LIBRARY_READ
     )
     async def ma1759_apple_first_page_shapes(self) -> dict[str, object]:
-        """One-use candidate diagnostic of genuine Apple first pages, without raw IDs.
+        """
+        One-use candidate diagnostic of genuine Apple first pages, without raw IDs.
 
         The existing MA authentication and LIBRARY_READ scope are mandatory.
         Queue snapshots use the separately authorised QUEUES_READ command, and

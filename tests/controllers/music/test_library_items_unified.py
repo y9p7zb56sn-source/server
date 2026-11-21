@@ -267,6 +267,8 @@ async def test_full_hydration_and_unavailable_or_empty(
         {"summary": "no"},
         {"genre": [True]},
         {"genre": []},
+        {"genre": 2**63},
+        {"genre": [7, 2**63]},
         {"provider": [""]},
         {"provider": 123},
         {"reachable_via": "prov_a_inst"},
@@ -280,6 +282,14 @@ async def test_invalid_inputs_fail_closed(
     mass, _ = unified_mass
     with pytest.raises(InvalidDataError):
         await mass.music.tracks.library_items_unified(**invalid)
+
+
+async def test_maximum_signed_sqlite_genre_id_is_accepted(
+    unified_mass: tuple[MusicAssistant, dict[int, str]],
+) -> None:
+    """The SQLite INTEGER upper boundary is valid without an overflow."""
+    mass, _ = unified_mass
+    assert await mass.music.tracks.library_items_unified(genre=2**63 - 1) == []
 
 
 async def test_unknown_command_and_database_errors_do_not_fallback(

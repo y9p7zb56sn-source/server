@@ -423,8 +423,12 @@ class TracksController(MediaControllerBase[Track]):
             raise InvalidDataError("reachable_via must be a list of instance IDs")
         if genre is not None:
             genres = genre if isinstance(genre, list) else [genre]
-            if not genres or len(genres) > 100 or any(type(g) is not int or g <= 0 for g in genres):
-                raise InvalidDataError("genre must contain positive integer IDs")
+            if (
+                not genres
+                or len(genres) > 100
+                or any(type(g) is not int or not 1 <= g <= 2**63 - 1 for g in genres)
+            ):
+                raise InvalidDataError("genre must contain valid positive SQLite integer IDs")
 
         sort_columns = {
             "sort_name": "tracks.search_sort_name",

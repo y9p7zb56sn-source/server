@@ -25,7 +25,13 @@ These blob values are **Git object IDs, not installed file SHA-256**.
 The pure standard-library `stage.py` verifies all five before creating
 a new staging directory; it writes only the five modules, a fixed Dockerfile,
 a build-time verifier and a SHA-256 manifest. It refuses existing targets,
-changed blobs, symlinks and non-regular source files. It has no Docker,
+changed blobs, symlinks and non-regular source files. It also pins the
+staged `Dockerfile` to reviewed Git blob
+`eb3bd4e2b2b709547aaaf91c454e4d84f7e2013c` and
+`verify_image.py` to reviewed Git blob
+`a3c7358a29db145ab9e2da487becfe4699c89cac`, independent of
+the candidate checkout's current file bytes. Both are rechecked during staging;
+tampering with either blocks creation of the destination. It has no Docker,
 network, credential or live runtime call.
 
 ## Isolated build procedure — specification, NOT execution approval
@@ -37,10 +43,22 @@ network, credential or live runtime call.
    Do **not** mistake a local image ID for a registry `@sha256` manifest digest.
    Reject absence or mismatch; do not fetch `latest`, alter a NAS container,
    or assume candidate-ci has Docker or LAN access.
-2. In a checked-out copy of the exact fork candidate, stage a **new**
+2. On the isolated builder, check out the **independently reviewed exact fork
+   commit** (obtain its full 40-character SHA from the approved PR/CI record).
+   Before staging, check `git rev-parse HEAD` equals that specific SHA,
+   `git status --porcelain` is empty, and the expected five module and two
+   build-input Git blobs match the fixed pins in `stage.py`. Reject a dirty
+   checkout, missing file or mismatched identity; do not stage from a moving
+   branch, tag, unverified archive or a different commit. Stage a **new**
    absolute temporary directory with
    `python -B deploy/ma1759-diagnostic/stage.py <new-absolute-directory>`.
-   Verify `MA1759_SOURCE_STAGING=PASS` and inspect only the manifest metadata.
+   Verify `MA1759_SOURCE_STAGING=PASS` and the resulting context contains
+   exactly five Python modules, `Dockerfile`, `verify_image.py` and
+   `manifest.json` (eight files). Before the Docker build, recheck the
+   staged packaging inputs' pinned Git blobs and all five module SHA-256
+   values against `manifest.json`; preserve the exact checkout SHA and
+   manifest SHA-256 with the isolated build evidence. Abort on any
+   post-staging alteration or extra context file.
 3. On the isolated builder, resolve the supplied image reference and confirm
    Docker inspect `.Id` matches the fixed base SHA above **before** building.
    Use the staged Dockerfile and context with `--pull=false --network=none`;

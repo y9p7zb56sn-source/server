@@ -34,6 +34,9 @@ def test_stage_exact_reviewed_five_modules_without_extras(tmp_path: Path) -> Non
         assert STAGE["_git_blob_sha"](data) == expected_git_blob
         assert manifest["modules"][relative]["sha256"] == hashlib.sha256(data).hexdigest()
 
+    for name, expected_git_blob in STAGE["DEPLOY_BLOBS"].items():
+        assert STAGE["_git_blob_sha"]((output / name).read_bytes()) == expected_git_blob
+
     dockerfile = (output / "Dockerfile").read_text(encoding="utf-8")
     for relative in MODULE_BLOBS:
         assert f"COPY {relative} /app/venv/lib/python3.14/site-packages/{relative}" in (dockerfile)
@@ -59,6 +62,18 @@ def test_staging_rejects_changed_provider_without_creating_context(tmp_path: Pat
     provider.write_bytes(provider.read_bytes() + b"\n# unexpected source edit\n")
     context = tmp_path / "context"
     with pytest.raises(SourceAdmissionError, match="MA1759_SOURCE_BLOB_MISMATCH"):
+        STAGE["stage"](source, context)
+    assert not context.exists()
+
+
+@pytest.mark.parametrize("name", ("Dockerfile", "verify_image.py"))
+def test_staging_rejects_tampered_deploy_file(tmp_path: Path, name: str) -> None:
+    """Reject changes to either independently reviewed build input."""
+    source = _copy_source_closure(tmp_path / "fork")
+    deploy_file = source / "deploy/ma1759-diagnostic" / name
+    deploy_file.write_bytes(deploy_file.read_bytes() + b"\n# unreviewed edit\n")
+    context = tmp_path / "context"
+    with pytest.raises(SourceAdmissionError, match="MA1759_DEPLOY_BLOB_MISMATCH"):
         STAGE["stage"](source, context)
     assert not context.exists()
 

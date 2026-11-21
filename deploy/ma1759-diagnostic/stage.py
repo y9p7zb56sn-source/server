@@ -35,7 +35,13 @@ MODULE_BLOBS = {
         "4623d6876f2d0fc9cd875c174616e5d6c23d6e71"
     ),
 }
-DEPLOY_FILES = ("Dockerfile", "verify_image.py")
+# Independently reviewed Git blob identities for the two executable build inputs.
+# Never derive these pins from the files currently being staged.
+DEPLOY_BLOBS = {
+    "Dockerfile": "eb3bd4e2b2b709547aaaf91c454e4d84f7e2013c",
+    "verify_image.py": "a3c7358a29db145ab9e2da487becfe4699c89cac",
+}
+DEPLOY_FILES = tuple(DEPLOY_BLOBS)
 
 
 class SourceAdmissionError(ValueError):
@@ -77,8 +83,9 @@ def stage(source_root: Path, destination: Path) -> dict[str, object]:
 
     records = verify_sources(source_root)
     deployment = source_root / "deploy/ma1759-diagnostic"
-    for name in DEPLOY_FILES:
-        _file_bytes(deployment / name)
+    for name, expected_blob in DEPLOY_BLOBS.items():
+        if _git_blob_sha(_file_bytes(deployment / name)) != expected_blob:
+            raise SourceAdmissionError("MA1759_DEPLOY_BLOB_MISMATCH")
     manifest = {
         "schema": "ma1759.diagnostic_build_context.v1",
         "reviewed_source_commit": REVIEWED_SOURCE_COMMIT,
@@ -89,11 +96,17 @@ def stage(source_root: Path, destination: Path) -> dict[str, object]:
     temporary = Path(tempfile.mkdtemp(prefix=".ma1759-stage-", dir=destination.parent))
     try:
         for relative in MODULE_BLOBS:
+            data = _file_bytes(source_root / relative)
+            if hashlib.sha256(data).hexdigest() != records[relative]["sha256"]:
+                raise SourceAdmissionError("MA1759_SOURCE_BLOB_MISMATCH")
             out = temporary / relative
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(_file_bytes(source_root / relative))
-        for name in DEPLOY_FILES:
-            (temporary / name).write_bytes(_file_bytes(deployment / name))
+            out.write_bytes(data)
+        for name, expected_blob in DEPLOY_BLOBS.items():
+            data = _file_bytes(deployment / name)
+            if _git_blob_sha(data) != expected_blob:
+                raise SourceAdmissionError("MA1759_DEPLOY_BLOB_MISMATCH")
+            (temporary / name).write_bytes(data)
         (temporary / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )

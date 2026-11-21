@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from aiohttp import ClientResponseError
 from music_assistant_models.enums import MediaType
@@ -22,6 +24,7 @@ from music_assistant_models.errors import (
 from music_assistant_models.media_items import (
     Album,
     Artist,
+    BrowseFolder,
     ItemMapping,
     Playlist,
     RecommendationFolder,
@@ -42,15 +45,6 @@ if TYPE_CHECKING:
     from .provider import AppleMusicProvider
 
 
-def _slugify_title(title: str) -> str:
-    """Return a stable, alphanumeric slug for a recommendation folder title."""
-    slug = "".join(c for c in title.lower().replace(" ", "_") if c.isalnum() or c == "_")
-    if not slug:
-        # Fall back to a hash for titles that yield no alphanumeric characters.
-        slug = hashlib.md5(title.encode(), usedforsecurity=False).hexdigest()[:12]
-    return slug
-
-
 class AppleMusicRecommendationManager:
     """Handles recommendations, stations, and similar-track lookups."""
 
@@ -64,6 +58,8 @@ class AppleMusicRecommendationManager:
         self.domain = provider.domain
         self.api = provider.api_client
         self.logger = provider.logger
+        # Only paths actually offered by Apple-backed rows/pages are browseable.
+        self._offered_recommendation_pages: set[str] = set()
 
     @use_cache(3600 * 24, allow_expired_cache=True)
     async def get_similar_tracks(self, prov_track_id: str, limit: int = 25) -> list[Track]:
@@ -168,12 +164,168 @@ class AppleMusicRecommendationManager:
             )
             return None
 
-    async def get_recently_added_library(self) -> list[Album | Artist | Playlist | Track]:
-        """Read Apple's genuine mixed recently-added library resources in returned order."""
-        response = await self.api.get_data("me/library/recently-added")
+    @staticmethod
+    def _recommendation_contents_cursor(
+        next_path: object, recommendation_id: str, previous_offset: int
+    ) -> tuple[int, int | None] | None:
+        """Admit only Apple's advancing relative next for this exact shelf."""
+        if next_path is None:
+            return None
+        if not isinstance(next_path, str):
+            raise TypeError("Invalid Apple recommendation continuation")
+        url = urlsplit(next_path)
+        expected_path = f"/v1/me/recommendations/{quote(recommendation_id, safe='')}/contents"
+        if url.scheme or url.netloc or url.fragment or url.path != expected_path:
+            raise ValueError("Invalid Apple recommendation relationship endpoint")
+        query = parse_qs(url.query, keep_blank_values=True)
+        if not query or set(query) - {"offset", "limit"}:
+            raise ValueError("Invalid Apple recommendation continuation parameters")
+        offsets = query.get("offset")
+        if offsets is None or len(offsets) != 1 or re.fullmatch(r"[0-9]{1,12}", offsets[0]) is None:
+            raise ValueError("Invalid Apple recommendation offset")
+        offset = int(offsets[0])
+        if offset <= previous_offset:
+            raise ValueError("Non-advancing Apple recommendation continuation")
+        limit_values = query.get("limit")
+        limit: int | None = None
+        if limit_values is not None:
+            if (
+                len(limit_values) != 1
+                or re.fullmatch(r"[0-9]{1,4}", limit_values[0]) is None
+                or int(limit_values[0]) == 0
+            ):
+                raise ValueError("Invalid Apple recommendation page limit")
+            limit = int(limit_values[0])
+        return offset, limit
+
+    def _recommendation_continuation_folder(
+        self, recommendation_id: str, next_path: object, previous_offset: int
+    ) -> BrowseFolder | None:
+        """Represent a genuine Apple relationship next as a lazy MA browse folder."""
+        continuation = self._recommendation_contents_cursor(
+            next_path, recommendation_id, previous_offset
+        )
+        if continuation is None:
+            return None
+        offset, limit = continuation
+        encoded_id = quote(recommendation_id, safe="")
+        path = f"{self.instance_id}://recommendations-page/{encoded_id}/{offset}"
+        if limit is not None:
+            path += f"/{limit}"
+        self._offered_recommendation_pages.add(path)
+        return BrowseFolder(
+            item_id=f"recommendations-page-{hashlib.sha256(path.encode()).hexdigest()[:16]}",
+            provider=self.instance_id,
+            path=path,
+            name="Load more from this Apple Music shelf",
+        )
+
+    async def _parse_recommendation_content(
+        self, raw: dict[str, Any]
+    ) -> Album | Artist | ItemMapping | Playlist | Track | None:
+        """Use the same supported media parsers for first and later shelf pages."""
+        item_type = raw.get("type")
+        item_id = raw.get("id")
+        if not item_id or item_type not in {"artists", "albums", "songs", "playlists", "stations"}:
+            return None
+        attributes = raw.get("attributes") or {}
+        if not isinstance(attributes, dict):
+            return None
+        if item_type == "stations":
+            if attributes.get("isLive", False):
+                return None
+            media = (
+                parse_station_as_playlist(self.provider, raw)
+                if attributes.get("name")
+                else await self.provider.get_playlist(item_id)
+            )
+            if not media.name or media.name == item_id:
+                return None
+            self._station_id_to_name[item_id] = media.name
+            self._station_name_to_id[media.name] = item_id
+            return media
+        if not attributes.get("name"):
+            # A bare Apple relationship ID is not an authored shelf card.
+            return None
+        return self._parse_recommended_media(item_type, raw)
+
+    async def browse_recommendation_page(
+        self, path: str
+    ) -> list[Album | Artist | ItemMapping | Playlist | Track | BrowseFolder]:
+        """Fetch exactly one previously offered Apple relationship page, read-only."""
+        payload = await self.provider._recommendation_payload()
+        cached_paths = {
+            item.path
+            for folder in payload
+            for item in folder.items
+            if isinstance(item, BrowseFolder)
+        }
+        if path not in cached_paths and path not in self._offered_recommendation_pages:
+            raise ValueError("This Apple Music shelf continuation is no longer available")
+        parts = path.split("://", 1)[-1].split("/")
+        if len(parts) not in {3, 4} or parts[0] != "recommendations-page":
+            raise ValueError("Invalid Apple Music shelf browse path")
+        encoded_id, raw_offset = parts[1:3]
+        recommendation_id = unquote(encoded_id)
+        if (
+            not recommendation_id
+            or len(recommendation_id) > 200
+            or quote(recommendation_id, safe="") != encoded_id
+            or re.fullmatch(r"[0-9]{1,12}", raw_offset) is None
+        ):
+            raise ValueError("Invalid Apple Music recommendation identity or offset")
+        offset = int(raw_offset)
+        if offset <= 0:
+            raise ValueError("Invalid Apple Music recommendation page")
+        kwargs: dict[str, int] = {"offset": offset}
+        if len(parts) == 4:
+            if re.fullmatch(r"[0-9]{1,4}", parts[3]) is None or int(parts[3]) == 0:
+                raise ValueError("Invalid Apple Music recommendation page limit")
+            kwargs["limit"] = int(parts[3])
+        response = await self.api.get_data(f"me/recommendations/{encoded_id}/contents", **kwargs)
+        if "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recommendation page")
+        if not isinstance(response["data"], list):
+            raise TypeError("Invalid Apple recommendation page")
+        items: list[Album | Artist | ItemMapping | Playlist | Track | BrowseFolder] = []
+        seen: set[tuple[str, str]] = set()
+        for raw in response["data"]:
+            if not isinstance(raw, dict):
+                continue
+            key = (str(raw.get("type")), str(raw.get("id")))
+            if key in seen:
+                continue
+            media = await self._parse_recommendation_content(raw)
+            if media is not None:
+                seen.add(key)
+                items.append(media)
+        more = self._recommendation_continuation_folder(
+            recommendation_id, response.get("next"), offset
+        )
+        if more is not None:
+            items.append(more)
+        return items
+
+    async def get_recently_added_library(
+        self,
+    ) -> list[Album | Artist | Playlist | Track]:
+        """Read the first Apple recently-added library page for existing callers."""
+        items, _ = await self.get_recently_added_library_page()
+        return items
+
+    async def get_recently_added_library_page(
+        self, offset: int = 0
+    ) -> tuple[list[Album | Artist | Playlist | Track], int | None]:
+        """Read one genuine Apple library-chronology page and its continuation."""
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("Invalid Apple recently added offset")
+        params = {"offset": str(offset)} if offset else {}
+        response = await self.api.get_data("me/library/recently-added", **params)
+        if "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recently added response")
         raw_items = response.get("data", [])
         if not isinstance(raw_items, list):
-            return []
+            raise TypeError("Invalid Apple recently added response")
         # Apple can legitimately supply library-albums named "Unknown Album".
         # A single read-only library detail request may contain better metadata.
         placeholders = [
@@ -241,22 +393,77 @@ class AppleMusicRecommendationManager:
                 continue
             if isinstance(media, (Album, Artist, Playlist, Track)) and media.name:
                 items.append(media)
-        return items
+        return items, self._recently_added_next_offset(response, offset)
 
-    async def get_recently_played_tracks(self, limit: int = 20) -> list[Track]:
-        """
-        Read actual recent song history; never substitute recommendation stations.
+    @staticmethod
+    def _recently_added_next_offset(response: dict[str, Any], offset: int) -> int | None:
+        """Read only Apple's same-endpoint pagination offset, never a supplied URL."""
+        next_path = response.get("next")
+        if next_path is None:
+            return None
+        if not isinstance(next_path, str):
+            raise TypeError("Invalid Apple recently added pagination")
+        url = urlsplit(next_path)
+        if url.scheme or url.netloc or url.fragment or url.path != "/v1/me/library/recently-added":
+            raise ValueError("Invalid Apple recently added pagination")
+        params = parse_qs(url.query, keep_blank_values=True)
+        if set(params) != {"offset"}:
+            raise ValueError("Unexpected Apple recently added pagination parameters")
+        offsets = params["offset"]
+        if len(offsets) != 1 or re.fullmatch(r"[0-9]+", offsets[0]) is None:
+            raise ValueError("Invalid Apple recently added offset")
+        next_offset = int(offsets[0])
+        if next_offset <= offset:
+            raise ValueError("Non-advancing Apple recently added pagination")
+        return next_offset
 
-        This is source-only until a supported Music Assistant provider API entry
-        point has been selected and authorised for the running installation.
-        """
-        if not 1 <= limit <= 30:
-            raise ValueError("Apple recent tracks limit must be between 1 and 30")
-        response = await self.api.get_data(
-            "me/recent/played/tracks", types="songs,library-songs", limit=limit
-        )
+    @staticmethod
+    def _recent_tracks_next_offset(response: dict[str, Any], offset: int) -> int | None:
+        """Use only Apple's documented relative next-page path, never a caller URL."""
+        next_path = response.get("next")
+        if next_path is None:
+            return None
+        if not isinstance(next_path, str):
+            raise TypeError("Invalid Apple recent tracks pagination")
+        url = urlsplit(next_path)
+        if url.scheme or url.netloc or url.fragment or url.path != "/v1/me/recent/played/tracks":
+            raise ValueError("Invalid Apple recent tracks pagination")
+        params = parse_qs(url.query, keep_blank_values=True)
+        if set(params) - {"offset", "limit", "types"}:
+            raise ValueError("Unexpected Apple recent tracks pagination parameters")
+        offsets = params.get("offset")
+        if offsets is None or len(offsets) != 1 or re.fullmatch(r"[0-9]+", offsets[0]) is None:
+            raise ValueError("Invalid Apple recent tracks offset")
+        if "limit" in params and (
+            len(params["limit"]) != 1 or re.fullmatch(r"[0-9]+", params["limit"][0]) is None
+        ):
+            raise ValueError("Invalid Apple recent tracks limit")
+        if "types" in params and params["types"] != ["songs,library-songs"]:
+            raise ValueError("Unexpected Apple recent tracks types")
+        next_offset = int(offsets[0])
+        if next_offset <= offset:
+            raise ValueError("Non-advancing Apple recent tracks pagination")
+        return next_offset
+
+    async def get_recently_played_tracks_page(
+        self, limit: int = 30, offset: int = 0
+    ) -> tuple[list[Track], int | None]:
+        """Retrieve only one genuine Apple track-history page and its continuation."""
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 30:
+            raise ValueError("Apple recent tracks page size must be between 1 and 30")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError("Invalid Apple recent tracks offset")
+        params: dict[str, Any] = {"types": "songs,library-songs", "limit": limit}
+        if offset:
+            params["offset"] = str(offset)
+        response = await self.api.get_data("me/recent/played/tracks", **params)
+        if "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recent tracks response")
+        raw_items = response.get("data", [])
+        if not isinstance(raw_items, list):
+            raise TypeError("Invalid Apple recent tracks response")
         tracks: list[Track] = []
-        for raw in response.get("data", []):
+        for raw in raw_items:
             if not isinstance(raw, dict) or raw.get("type") not in ("songs", "library-songs"):
                 continue
             attrs = raw.get("attributes")
@@ -268,9 +475,15 @@ class AppleMusicRecommendationManager:
                 continue
             if isinstance(parsed, Track):
                 tracks.append(parsed)
-        return tracks[:limit]
+        next_offset = self._recent_tracks_next_offset(response, offset)
+        return tracks, next_offset
 
-    async def get_personal_recommendations(self) -> list[RecommendationFolder]:  # noqa: PLR0915
+    async def get_recently_played_tracks(self, limit: int = 20) -> list[Track]:
+        """Read the first actual Apple track-history page for existing callers."""
+        tracks, _ = await self.get_recently_played_tracks_page(limit=limit)
+        return tracks
+
+    async def get_personal_recommendations(self) -> list[RecommendationFolder]:
         """
         Return supported Apple recommendations, not stations alone.
 
@@ -293,8 +506,12 @@ class AppleMusicRecommendationManager:
             event = "CANCELLED" if isinstance(exc, asyncio.CancelledError) else "FETCH_FAILED"
             self.logger.warning("MA1759_REFRESH=%s", event)
             raise
+        if "data" not in response:
+            raise ResourceTemporarilyUnavailable("Incomplete Apple recommendations response")
+        if not isinstance(response["data"], list):
+            raise TypeError("Invalid Apple recommendations response")
         counts = dict.fromkeys(("albums", "artists", "songs", "playlists", "stations"), 0)
-        for section in response.get("data", []):
+        for section in response["data"]:
             for item in section.get("relationships", {}).get("contents", {}).get("data", []):
                 kind = item.get("type")
                 if kind in counts:
@@ -307,63 +524,51 @@ class AppleMusicRecommendationManager:
 
         folders: dict[str, RecommendationFolder] = {}
         seen: set[tuple[str, str, str]] = set()
+        self._offered_recommendation_pages.clear()
+        # A public shelf identity must not depend on its title or on other
+        # Apple recommendations appearing in the same Home response.
         self._station_id_to_name.clear()
         self._station_name_to_id.clear()
 
-        for recommendation in response.get("data", []):
+        for recommendation in response["data"]:
             rec_id = recommendation.get("id", "")
             title = (
                 recommendation.get("attributes", {}).get("title", {}).get("stringForDisplay", "")
             )
             if not rec_id or not title:
                 continue
+            row_id = f"apple_home_{hashlib.sha256(str(rec_id).encode()).hexdigest()[:16]}"
             contents = recommendation.get("relationships", {}).get("contents", {})
             for item in contents.get("data", []):
-                item_type = item.get("type")
-                item_id = item.get("id")
-                if not item_id or item_type not in {
-                    "artists",
-                    "albums",
-                    "songs",
-                    "playlists",
-                    "stations",
-                }:
+                if not isinstance(item, dict):
                     continue
-                key = (title, item_type, str(item_id))
+                item_id, item_type = item.get("id"), item.get("type")
+                if not item_id or not item_type:
+                    continue
+                key = (str(rec_id), str(item_type), str(item_id))
                 if key in seen:
                     continue
-
-                attributes = item.get("attributes") or {}
-                media: Album | Artist | ItemMapping | Playlist | Track | None
-                if item_type == "stations":
-                    if attributes.get("isLive", False):
-                        # Existing Widevine-protected live station exclusion.
-                        continue
-                    if attributes.get("name"):
-                        media = parse_station_as_playlist(self.provider, item)
-                    else:
-                        media = await self.provider.get_playlist(item_id)
-                    if not media.name or media.name == item_id:
-                        continue
-                    self._station_id_to_name[item_id] = media.name
-                    self._station_name_to_id[media.name] = item_id
-                else:
-                    # Apple can return ID-only relationship references. Do not
-                    # invent titles or make network requests for every card.
-                    if not isinstance(attributes, dict) or not attributes.get("name"):
-                        continue
-                    media = self._parse_recommended_media(item_type, item)
-                    if media is None or not media.name:
-                        continue
-
+                media = await self._parse_recommendation_content(item)
+                if media is None:
+                    continue
                 seen.add(key)
-                if title not in folders:
-                    folders[title] = RecommendationFolder(
-                        item_id=_slugify_title(title),
+                if rec_id not in folders:
+                    folders[rec_id] = RecommendationFolder(
+                        item_id=row_id,
                         provider=self.provider.instance_id,
                         name=title,
                     )
-                folders[title].items.append(media)
+                folders[rec_id].items.append(media)
+            continuation = self._recommendation_continuation_folder(rec_id, contents.get("next"), 0)
+            if continuation is not None:
+                # A shelf consisting only of a genuine continuation remains browseable.
+                if rec_id not in folders:
+                    folders[rec_id] = RecommendationFolder(
+                        item_id=row_id,
+                        provider=self.provider.instance_id,
+                        name=title,
+                    )
+                folders[rec_id].items.append(continuation)
 
         return list(folders.values())
 

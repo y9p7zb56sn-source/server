@@ -24,9 +24,9 @@ def test_stage_exact_reviewed_five_modules_without_extras(tmp_path: Path) -> Non
     assert manifest["reviewed_source_commit"] == STAGE["REVIEWED_SOURCE_COMMIT"]
     assert manifest["required_base_image_id"] == REQUIRED_BASE
     assert set(manifest["modules"]) == set(MODULE_BLOBS)
-    assert {
-        str(path.relative_to(output)) for path in output.rglob("*") if path.is_file()
-    } == set(MODULE_BLOBS) | {"Dockerfile", "verify_image.py", "manifest.json"}
+    assert {str(path.relative_to(output)) for path in output.rglob("*") if path.is_file()} == set(
+        MODULE_BLOBS
+    ) | {"Dockerfile", "verify_image.py", "manifest.json"}
     assert json.loads((output / "manifest.json").read_text(encoding="utf-8")) == manifest
 
     for relative, expected_git_blob in MODULE_BLOBS.items():
@@ -36,9 +36,7 @@ def test_stage_exact_reviewed_five_modules_without_extras(tmp_path: Path) -> Non
 
     dockerfile = (output / "Dockerfile").read_text(encoding="utf-8")
     for relative in MODULE_BLOBS:
-        assert f"COPY {relative} /app/venv/lib/python3.14/site-packages/{relative}" in (
-            dockerfile
-        )
+        assert f"COPY {relative} /app/venv/lib/python3.14/site-packages/{relative}" in (dockerfile)
     assert "FROM ${MA_BASE_IMAGE}" in dockerfile
 
 
@@ -84,9 +82,7 @@ def test_staging_refuses_existing_target(tmp_path: Path) -> None:
     context = tmp_path / "context"
     context.mkdir()
     (context / "keep").write_text("preserve", encoding="utf-8")
-    with pytest.raises(
-        SourceAdmissionError, match="MA1759_DESTINATION_NOT_NEW_ABSOLUTE"
-    ):
+    with pytest.raises(SourceAdmissionError, match="MA1759_DESTINATION_NOT_NEW_ABSOLUTE"):
         STAGE["stage"](REPO, context)
     assert (context / "keep").read_text(encoding="utf-8") == "preserve"
 

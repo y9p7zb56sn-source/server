@@ -1,17 +1,20 @@
-"""#1759 source-only, fail-closed staging for the candidate diagnostic image.
-
-Produces an inert minimal Docker build context from exact reviewed Git blobs.
-Does not call Docker, open a socket, fetch credentials, access NAS or launch MA.
 """
+Stage the exact #1759 candidate-only diagnostic module set.
+
+Produce an inert minimal Docker build context from reviewed Git blobs.
+Never call Docker, access NAS, credentials or Music Assistant.
+"""
+
+# ruff: noqa: INP001 - standalone build script, not a package
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import stat
+import sys
 import tempfile
 from pathlib import Path
 
@@ -51,7 +54,8 @@ def _file_bytes(path: Path) -> bytes:
 
 def _git_blob_sha(data: bytes) -> str:
     header = b"blob " + str(len(data)).encode("ascii") + b"\x00"
-    return hashlib.sha1(header + data).hexdigest()  # noqa: S324 - Git SHA-1 blob identity
+    # Git blob object format requires SHA-1; this is not an authentication hash.
+    return hashlib.sha1(header + data).hexdigest()
 
 
 def verify_sources(source_root: Path) -> dict[str, dict[str, str]]:
@@ -99,7 +103,7 @@ def stage(source_root: Path, destination: Path) -> dict[str, object]:
         )
         if destination.exists() or destination.is_symlink():
             raise SourceAdmissionError("MA1759_DESTINATION_COLLISION")
-        os.rename(temporary, destination)
+        temporary.rename(destination)
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)
@@ -107,6 +111,7 @@ def stage(source_root: Path, destination: Path) -> dict[str, object]:
 
 
 def main() -> None:
+    """Stage only reviewed files into a new operator-supplied directory."""
     parser = argparse.ArgumentParser(description="Stage source-only #1759 Docker context")
     parser.add_argument("destination", type=Path, help="new absolute context directory")
     args = parser.parse_args()
@@ -115,10 +120,10 @@ def main() -> None:
         manifest = stage(source_root, args.destination)
     except (OSError, SourceAdmissionError) as exc:
         parser.exit(2, f"MA1759_SOURCE_STAGING=BLOCKED {type(exc).__name__}\n")
-    print("MA1759_SOURCE_STAGING=PASS")
-    print(f"MA1759_MODULES={len(manifest['modules'])}")
-    print("MA1759_DOCKER_BUILD=NOT_EXECUTED")
-    print("MA1759_RUNTIME_CHANGE=NONE")
+    sys.stdout.write("MA1759_SOURCE_STAGING=PASS\n")
+    sys.stdout.write(f"MA1759_MODULES={len(manifest['modules'])}\n")
+    sys.stdout.write("MA1759_DOCKER_BUILD=NOT_EXECUTED\n")
+    sys.stdout.write("MA1759_RUNTIME_CHANGE=NONE\n")
 
 
 if __name__ == "__main__":

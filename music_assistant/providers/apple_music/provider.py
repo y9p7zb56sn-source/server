@@ -35,6 +35,7 @@ from .helpers import browse_playlists
 from .library import AppleMusicLibraryManager
 from .media import AppleMusicMediaManager
 from .recommendations import AppleMusicRecommendationManager
+from .readonly_diagnostic_1759 import collect_apple_first_pages
 from .streaming import AppleMusicStreamingManager
 
 if TYPE_CHECKING:
@@ -248,6 +249,14 @@ class AppleMusicProvider(RecommendationPayloadMixin, MusicProvider):
         if item_id == "apple_recently_added_1759":
             return UniqueList(await self._recently_added_page_items())
         return await self._recommendation_items_from_payload(item_id)
+
+    async def get_household_readonly_first_page_shapes(self) -> dict[str, object]:
+        """Return account-free first-page shapes from THIS Apple provider session.
+
+        This method has no public endpoint of its own. A future candidate-only
+        MusicController command must enforce authenticated permission and one use.
+        """
+        return await collect_apple_first_pages(self.api_client.get_data)
 
     async def get_household_readonly_capability_summary(self) -> dict[str, object]:
         """

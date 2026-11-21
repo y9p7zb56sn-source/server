@@ -27,14 +27,18 @@ def _responses() -> dict[str, dict]:
     """Return synthetic account-identifiable responses that must never be exported."""
     return {
         HOME: {
-            "data": [{
-                "id": "PRIVATE-HOME-ID",
-                "attributes": {"title": {"stringForDisplay": "PRIVATE TITLE"}},
-                "relationships": {"contents": {
-                    "data": [{"type": "stations", "id": "PRIVATE-STATION"}],
-                    "next": "/v1/PRIVATE-HOME-LOCATION",
-                }},
-            }],
+            "data": [
+                {
+                    "id": "PRIVATE-HOME-ID",
+                    "attributes": {"title": {"stringForDisplay": "PRIVATE TITLE"}},
+                    "relationships": {
+                        "contents": {
+                            "data": [{"type": "stations", "id": "PRIVATE-STATION"}],
+                            "next": "/v1/PRIVATE-HOME-LOCATION",
+                        }
+                    },
+                }
+            ],
             "next": "/v1/PRIVATE-NEXT",
         },
         ADDED: {
@@ -86,6 +90,7 @@ async def test_exact_three_first_pages_and_private_output() -> None:
 @pytest.mark.asyncio
 async def test_authentic_empty_is_empty_not_fabricated() -> None:
     """Preserve real emptiness for each Apple first page."""
+
     async def read(_path: str, **_kwargs: object) -> dict:
         return {"data": []}
 
@@ -151,6 +156,7 @@ async def test_timeout_stops_before_following_pages() -> None:
 @pytest.mark.asyncio
 async def test_cancel_does_not_become_success() -> None:
     """Propagate cancellation without initiating a second Apple read."""
+
     async def cancel(_path: str, **_kwargs: object) -> dict:
         raise asyncio.CancelledError
 
@@ -195,9 +201,7 @@ async def test_endpoint_requires_authenticated_read_scope_and_is_one_use() -> No
 async def test_ambiguous_or_disallowed_provider_never_probes() -> None:
     """Refuse zero or multiple Apple providers before using any Apple session."""
     probe = AsyncMock(return_value={})
-    provider = SimpleNamespace(
-        domain="apple_music", get_household_readonly_first_page_shapes=probe
-    )
+    provider = SimpleNamespace(domain="apple_music", get_household_readonly_first_page_shapes=probe)
     for candidates in ([], [provider, provider]):
         fake = SimpleNamespace(
             _ma1759_first_pages_consumed=False,

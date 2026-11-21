@@ -18,6 +18,7 @@ SourceAdmissionError = STAGE["SourceAdmissionError"]
 
 
 def test_stage_exact_reviewed_five_modules_without_extras(tmp_path: Path) -> None:
+    """Stage only the five reviewed runtime sources into a new context."""
     output = tmp_path / "source-only-context"
     manifest = STAGE["stage"](REPO, output)
     assert manifest["reviewed_source_commit"] == STAGE["REVIEWED_SOURCE_COMMIT"]
@@ -54,6 +55,7 @@ def _copy_source_closure(destination: Path) -> Path:
 
 
 def test_staging_rejects_changed_provider_without_creating_context(tmp_path: Path) -> None:
+    """Reject a modified Apple provider before creating staging output."""
     source = _copy_source_closure(tmp_path / "fork")
     provider = source / "music_assistant/providers/apple_music/provider.py"
     provider.write_bytes(provider.read_bytes() + b"\n# unexpected source edit\n")
@@ -64,6 +66,7 @@ def test_staging_rejects_changed_provider_without_creating_context(tmp_path: Pat
 
 
 def test_staging_rejects_symlinked_source(tmp_path: Path) -> None:
+    """Reject a source symlink even when its referenced bytes match."""
     source = _copy_source_closure(tmp_path / "fork")
     module = source / "music_assistant/controllers/music/controller.py"
     original = module.read_bytes()
@@ -77,6 +80,7 @@ def test_staging_rejects_symlinked_source(tmp_path: Path) -> None:
 
 
 def test_staging_refuses_existing_target(tmp_path: Path) -> None:
+    """Preserve preexisting target content without overwriting it."""
     context = tmp_path / "context"
     context.mkdir()
     (context / "keep").write_text("preserve", encoding="utf-8")
@@ -88,6 +92,7 @@ def test_staging_refuses_existing_target(tmp_path: Path) -> None:
 
 
 def test_image_verifier_is_manifest_bound_and_offline() -> None:
+    """Require a complete fixed manifest without data or network access."""
     verifier = (DEPLOY / "verify_image.py").read_text(encoding="utf-8")
     for relative in MODULE_BLOBS:
         assert relative in verifier

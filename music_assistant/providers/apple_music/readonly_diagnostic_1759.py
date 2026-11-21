@@ -1,4 +1,5 @@
-"""#1759 candidate-only authenticated Apple first-page shape collector.
+"""
+#1759 candidate-only authenticated Apple first-page shape collector.
 
 Pure caller-facing projection: the authenticated AppleMusicAPIClient.get_data method
 is injected from the existing live AppleMusicProvider instance. No tokens, URLs,
@@ -101,7 +102,8 @@ async def collect_apple_first_pages(
     *,
     timeout_seconds: float = REQUEST_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    """Perform exactly three first-page GETs using the injected provider session.
+    """
+    Perform exactly three first-page GETs using the injected provider session.
 
     The command exposing this collector must enforce existing authenticated MA
     LIBRARY_READ scope, one permitted Apple provider, and one use per process.

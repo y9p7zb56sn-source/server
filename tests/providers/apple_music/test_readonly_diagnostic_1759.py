@@ -104,7 +104,7 @@ async def test_apple_failure_does_not_export_message_or_replay() -> None:
         calls.append((path, kwargs))
         raise RuntimeError("PRIVATE-TOKEN-AND-ACCOUNT")
 
-    with pytest.raises(AppleFirstPageShapeError, match="^APPLE_FIRST_PAGE_UNAVAILABLE$") as exc:
+    with pytest.raises(AppleFirstPageShapeError, match=r"^APPLE_FIRST_PAGE_UNAVAILABLE$") as exc:
         await collect_apple_first_pages(fail)
     assert "PRIVATE" not in str(exc.value)
     assert len(calls) == 1
@@ -119,7 +119,7 @@ async def test_malformed_home_shape_fails_closed() -> None:
     async def read(path: str, **_kwargs: object) -> dict:
         return responses[path]
 
-    with pytest.raises(AppleFirstPageShapeError, match="^APPLE_FIRST_PAGE_UNAVAILABLE$"):
+    with pytest.raises(AppleFirstPageShapeError, match=r"^APPLE_FIRST_PAGE_UNAVAILABLE$"):
         await collect_apple_first_pages(read)
 
 
@@ -143,7 +143,7 @@ async def test_timeout_stops_before_following_pages() -> None:
         await asyncio.sleep(0.05)
         return {"data": []}
 
-    with pytest.raises(AppleFirstPageShapeError, match="^APPLE_REQUEST_TIMEOUT$"):
+    with pytest.raises(AppleFirstPageShapeError, match=r"^APPLE_REQUEST_TIMEOUT$"):
         await collect_apple_first_pages(hang, timeout_seconds=0.001)
     assert calls == [HOME]
 

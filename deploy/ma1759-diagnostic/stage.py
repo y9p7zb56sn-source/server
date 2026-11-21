@@ -19,13 +19,9 @@ import tempfile
 from pathlib import Path
 
 REVIEWED_SOURCE_COMMIT = "4b2332d0a16f4c10aacf406170c2d5a09dc17dac"
-REQUIRED_BASE_IMAGE_ID = (
-    "sha256:e681b6aeedb25e639860b8c1e687578377277c2930908e3fa4cc7605501335ed"
-)
+REQUIRED_BASE_IMAGE_ID = "sha256:e681b6aeedb25e639860b8c1e687578377277c2930908e3fa4cc7605501335ed"
 MODULE_BLOBS = {
-    "music_assistant/controllers/music/controller.py": (
-        "f5d13036f27e03223937df1e9b24a852db9d60d9"
-    ),
+    "music_assistant/controllers/music/controller.py": ("f5d13036f27e03223937df1e9b24a852db9d60d9"),
     "music_assistant/controllers/music/media/tracks.py": (
         "53746f3f783f2bc7bce2f635dca7293046eb9aed"
     ),

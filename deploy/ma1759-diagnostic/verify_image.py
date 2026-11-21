@@ -1,17 +1,21 @@
-"""Verify exact staged module bytes after an offline #1759 Docker image build.
-
-Runs only inside the new image build. Does not open /data or read credentials.
 """
+Verify staged module bytes during the isolated #1759 image build.
+
+Do not access persistent application data, credentials or network.
+"""
+
+# ruff: noqa: INP001 - standalone offline Docker build verifier
 
 from __future__ import annotations
 
 import ast
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path("/app/venv/lib/python3.14/site-packages")
-MANIFEST = Path("/tmp/ma1759_diag_manifest.json")
+MANIFEST = Path("/opt/ma1759-diagnostic/manifest.json")
 REQUIRED_MODULES = frozenset(
     {
         "music_assistant/controllers/music/controller.py",
@@ -28,6 +32,7 @@ REQUIRED_IMAGE = (
 
 
 def main() -> None:
+    """Reject stale or mismatched module bytes and Python source syntax."""
     metadata = json.loads(MANIFEST.read_text(encoding="utf-8"))
     if (
         metadata.get("schema") != "ma1759.diagnostic_build_context.v1"
@@ -45,9 +50,9 @@ def main() -> None:
             raise SystemExit("MA1759_IMAGE_MODULE_DIGEST=FAIL")
         ast.parse(data, filename=relative)
 
-    print("MA1759_IMAGE_FIVE_MODULE_DIGESTS=PASS")
-    print("MA1759_IMAGE_IMPORT_AND_RUNTIME=NOT_ATTESTED")
-    print("MA1759_APPLE_AUTH=NOT_ACCESSED")
+    sys.stdout.write("MA1759_IMAGE_FIVE_MODULE_DIGESTS=PASS\n")
+    sys.stdout.write("MA1759_IMAGE_IMPORT_AND_RUNTIME=NOT_ATTESTED\n")
+    sys.stdout.write("MA1759_APPLE_AUTH=NOT_ACCESSED\n")
 
 
 if __name__ == "__main__":

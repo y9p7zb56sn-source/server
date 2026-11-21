@@ -278,6 +278,7 @@ class MusicController(MusicDatabaseSetupMixin, CoreController):
         self.recency = RecencyEngine(self.mass)
         self._database: DatabaseConnection | None = None
         self._sync_lock = asyncio.Lock()
+        self._ma1759_first_pages_consumed = False
         self.manifest.name = "Music controller"
         self.manifest.description = (
             "Music Assistant's core controller which manages all music from all providers."
@@ -778,6 +779,29 @@ class MusicController(MusicDatabaseSetupMixin, CoreController):
         # limit -1 to account for the prepended items
         prov_items = await cast("MusicProvider", browse_prov).browse(path=path)
         return [*prepend_items, *prov_items]
+
+    @api_command("music/ma1759_apple_first_page_shapes", required_scope=Scope.LIBRARY_READ)
+    async def ma1759_apple_first_page_shapes(self) -> dict[str, object]:
+        """
+        One-use candidate diagnostic of genuine Apple first pages, without raw IDs.
+
+        The existing MA authentication and LIBRARY_READ scope are mandatory.
+        Queue snapshots use the separately authorised QUEUES_READ command, and
+        actual image/module integrity must be established by the trusted local
+        receiver BEFORE invoking this command. This method is not runtime proof.
+        """
+        if self._ma1759_first_pages_consumed:
+            raise InvalidDataError("MA1759_DIAGNOSTIC_ALREADY_CONSUMED")
+        providers = self._apply_user_provider_filter(self.get_provider_instances("apple_music"))
+        if len(providers) != 1 or providers[0].domain != "apple_music":
+            raise InvalidDataError("MA1759_APPLE_PROVIDER_NOT_UNIQUE_OR_ALLOWED")
+        probe = getattr(providers[0], "get_household_readonly_first_page_shapes", None)
+        if not callable(probe):
+            raise InvalidDataError("MA1759_APPLE_DIAGNOSTIC_UNAVAILABLE")
+        # Mark consumed before the first await: concurrent requests cannot race
+        # into an additional Apple read, and errors/timeouts are not replayed.
+        self._ma1759_first_pages_consumed = True
+        return await probe()
 
     @api_command("music/recently_played_items", required_scope=Scope.LIBRARY_READ)
     async def recently_played(
